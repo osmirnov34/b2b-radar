@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    container_name: b2b-radar
+    environment:
+      - PYTHONUNBUFFERED=1
+    stdin_open: true
+    tty: true
