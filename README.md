@@ -45,10 +45,11 @@ docker-compose run --rm app bash
 
 ### Code Quality
 
-This project uses **pre-commit** hooks to automatically lint and format code before commits.
+This project uses **pre-commit** hooks to automatically lint, format, and type-check code before commits.
 
 **Installed hooks:**
 - **Ruff**: Fast Python linter and formatter (with auto-fix enabled)
+- **mypy**: Static type checker for Python (strict mode enabled)
 
 **Git hooks run automatically on `git commit`.** To run manually:
 
@@ -56,9 +57,18 @@ This project uses **pre-commit** hooks to automatically lint and format code bef
 # Run all hooks
 pre-commit run --all-files
 
+# Run specific hook
+pre-commit run mypy --all-files
+pre-commit run ruff --all-files
+
 # Update hook definitions
 pre-commit autoupdate
+
+# Run mypy directly
+mypy .
 ```
+
+**Mypy configuration** is in `pyproject.toml` with strict type checking enabled. All code must pass type checking before commit.
 
 **Bypass hooks (not recommended):**
 ```bash
