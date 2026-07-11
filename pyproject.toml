@@ -2,3 +2,33 @@
 name = "b2b-radar"
 version = "0.1.0"
 requires-python = ">=3.11,<3.13"
+
+[tool.ruff]
+target-version = "py311"
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "__pypackages__",
+    "build",
+    "dist",
+]
+line-length = 120
+
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "ISC001",
+    "D203",
+    "D213",
+    "CPY001",
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    "ANN101", "ANN102",
+    "FBT001", "FBT002",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/*" = ["S101"]
+"scripts/*" = ["T201"]
