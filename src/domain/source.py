@@ -1,15 +1,15 @@
 from enum import StrEnum
 from typing import Any
 
-import pydantic
+from pydantic import BaseModel, Field
 
 
 class SourceType(StrEnum):
     YOUTUBE_VIDEO = "youtube_video"
 
 
-class Source(pydantic.BaseModel):
+class Source(BaseModel):
     type: SourceType
     url: str
     name: str
-    metadata: dict[str, Any] = pydantic.Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
