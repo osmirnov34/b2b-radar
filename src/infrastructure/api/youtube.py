@@ -1,8 +1,11 @@
+import logging
 from http import HTTPStatus
 from typing import Any, cast
 
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
+
+logger = logging.getLogger(__name__)
 
 
 class YoutubeClient:
@@ -12,8 +15,10 @@ class YoutubeClient:
         self.api_keys = api_keys
         self.current_key_index = 0
         self.youtube = self._build_client()
+        logger.info("YoutubeClient initialized with %d API key(s)", len(api_keys))
 
     def _build_client(self) -> Resource:
+        logger.debug("Building YouTube client with key index %s", self.current_key_index)
         return build("youtube", "v3", developerKey=self.api_keys[self.current_key_index])
 
     @staticmethod
@@ -34,9 +39,11 @@ class YoutubeClient:
 
         """
         if self.current_key_index >= len(self.api_keys) - 1:
+            logger.warning("No more API keys available to switch to")
             return False
         self.current_key_index += 1
         self.youtube = self._build_client()
+        logger.info("Quota exceeded, switched to key index %s", self.current_key_index)
         return True
 
     def search_videos(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -53,6 +60,7 @@ class YoutubeClient:
             HttpError: If quota is exceeded and no more API keys available.
 
         """
+        logger.info("Searching videos for query=%r, limit=%d", query, limit)
         results: list[dict[str, Any]] = []
         next_page_token: str | None = None
 
@@ -72,6 +80,7 @@ class YoutubeClient:
             except HttpError as e:
                 if self._is_quota_error(e) and self.next_key():
                     continue
+                logger.exception("YouTube API request failed for query=%r", query)
                 raise
 
             items = cast("list[dict[str, Any]]", response.get("items", []))
@@ -84,4 +93,5 @@ class YoutubeClient:
             if not next_page_token:
                 break
 
+        logger.info("Search for query=%r returned %d result(s)", query, len(results))
         return results
