@@ -9,6 +9,8 @@ class SourceType(StrEnum):
 
 
 class Source(BaseModel):
+    """Source of b2b ideas: YouTube channel, Telegram chat, or site."""
+
     type: SourceType
     url: str
     name: str
