@@ -95,3 +95,42 @@ class YoutubeClient:
 
         logger.info("Search for query=%r returned %d result(s)", query, len(results))
         return results
+
+    def get_video_details(self, video_ids: list[str]) -> list[dict[str, Any]]:
+        """Get detailed information for a list of videos.
+
+        Args:
+            video_ids (list[str]): List of YouTube video IDs.
+
+        Returns:
+            list[dict[str, Any]]: Detailed video resources including snippet, statistics, and contentDetails.
+
+        """
+        if not video_ids:
+            return []
+
+        logger.info("Fetching details for %d video(s)", len(video_ids))
+        video_details: list[dict[str, Any]] = []
+
+        # YouTube API limit: up to 50 video IDs per request
+        for i in range(0, len(video_ids), 50):
+            batch_ids = video_ids[i : i + 50]
+
+            while True:
+                try:
+                    request = self.youtube.videos().list(
+                        id=",".join(batch_ids),
+                        part="snippet,statistics,contentDetails",
+                    )
+                    response = cast("dict[str, Any]", request.execute())
+                    items = cast("list[dict[str, Any]]", response.get("items", []))
+                    video_details.extend(items)
+                    break
+                except HttpError as e:
+                    if self._is_quota_error(e) and self.next_key():
+                        logger.warning("Quota hit during details fetch, switched key and retrying batch")
+                        continue
+                    logger.exception("Failed to fetch video details")
+                    raise
+
+        return video_details
