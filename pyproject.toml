@@ -3,7 +3,7 @@ name = "b2b-radar"
 version = "0.1.0"
 requires-python = ">=3.11,<3.13"
 
-    dependencies = [
+dependencies = [
     "pydantic>=2.13.0",
     "google-api-python-client",
     "sqlalchemy[asyncio]>=2.0.0",
@@ -40,8 +40,9 @@ ignore = [
     "D203",
     "D213",
     "CPY001",
-    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D205",
     "FBT001", "FBT002",
+    "ERA001"
 ]
 
 [tool.ruff.lint.per-file-ignores]
