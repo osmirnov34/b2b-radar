@@ -11,66 +11,46 @@ Automated B2B startup idea discovery from public discussions (YouTube, Reddit, f
 
 ### Installation
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/osmirnov34/b2b-radar
 cd b2b-radar
-```
-
-2. Install pre-commit hooks:
-```bash
 pre-commit install
+cp .env.example .env   # fill in POSTGRES_* (used by Docker Compose and Alembic)
+docker-compose up -d postgres
+alembic upgrade head
 ```
 
 ## Development
 
-### Docker Setup
+### Docker
 
-This project uses Docker for consistent development and deployment environments.
-
-**Build the image:**
 ```bash
 docker-compose build
-```
-
-**Run the application:**
-```bash
 docker-compose up
+docker-compose run --rm app bash   # interactive
 ```
 
-**Run with interactive mode:**
+### Database Migrations
+
+Alembic, scripts in `migrations/versions/`.
+
 ```bash
-docker-compose run --rm app bash
+alembic upgrade head                                  # apply
+alembic downgrade -1                                   # rollback last
+alembic revision --autogenerate -m "message"           # after model changes — review the diff before committing
+alembic current / alembic history                      # inspect
 ```
+
+Related tables can share one migration (e.g. FK dependencies) as long as `upgrade`/`downgrade` order respects them. Otherwise, one migration per change — don't edit an already-applied one.
 
 ### Code Quality
 
-This project uses **pre-commit** hooks to automatically lint, format, and type-check code before commits.
-
-**Installed hooks:**
-- **Ruff**: Fast Python linter and formatter (with auto-fix enabled)
-- **mypy**: Static type checker for Python (strict mode enabled)
-
-**Git hooks run automatically on `git commit`.** To run manually:
+pre-commit runs Ruff + mypy (strict) on `git commit`.
 
 ```bash
-# Run all hooks
 pre-commit run --all-files
-
-# Run specific hook
 pre-commit run mypy --all-files
 pre-commit run ruff --all-files
-
-# Update hook definitions
 pre-commit autoupdate
-
-# Run mypy directly
-mypy .
-```
-
-**Mypy configuration** is in `pyproject.toml` with strict type checking enabled. All code must pass type checking before commit.
-
-**Bypass hooks (not recommended):**
-```bash
-git commit --no-verify
+git commit --no-verify   # bypass, not recommended
 ```
