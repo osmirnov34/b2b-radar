@@ -30,6 +30,7 @@ exclude = [
     "__pypackages__",
     "build",
     "dist",
+    "migrations",
 ]
 line-length = 120
 
@@ -58,6 +59,7 @@ exclude = [
     'venv',
     '.venv',
     'tests',
+    'migrations',
 ]
 
 warn_unused_configs = true
