@@ -1,10 +1,17 @@
 import asyncio
+import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from src.infrastructure.db.models import Base
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -15,11 +22,16 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+database_url = (
+    "postgresql+asyncpg://"
+    f"{os.environ['POSTGRES_USER']}:{os.environ['POSTGRES_PASSWORD']}"
+    f"@{os.environ['POSTGRES_HOST']}:{os.environ['POSTGRES_PORT']}/{os.environ['POSTGRES_DB']}"
+)
+config.set_main_option("sqlalchemy.url", database_url)
+
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
