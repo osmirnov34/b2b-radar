@@ -8,7 +8,7 @@ from pydantic import Field
 class Document(pydantic.BaseModel):
     """Document: YouTube video, Telegram message, or news from the site."""
 
-    id: int
+    id: int | None = None
     source_id: int
     external_id: str
     text: str

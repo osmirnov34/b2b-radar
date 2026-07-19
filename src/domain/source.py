@@ -11,6 +11,7 @@ class SourceType(StrEnum):
 class Source(BaseModel):
     """Source of b2b ideas: YouTube channel, Telegram chat, or site."""
 
+    id: int | None = None
     type: SourceType
     url: str
     name: str
