@@ -1,6 +1,9 @@
 import logging
+from datetime import datetime
 from typing import Any, cast
+from urllib.parse import parse_qs, urlparse
 
+from src.domain.document import Document
 from src.domain.source import Source, SourceType
 from src.infrastructure.api.youtube import YoutubeClient
 from src.infrastructure.extractor.base import Extractor
@@ -33,6 +36,50 @@ class YoutubeExtractor(Extractor):
 
         logger.info("Extracted %d source(s) for query=%r", len(sources), query)
         return sources
+
+    def extract_documents(self, source: Source, limit: int = 100) -> list[Document]:
+        """Fetch top-level comments for a video source and map them to Document objects.
+
+        Args:
+            source (Source): A persisted YouTube video source (must have an id).
+            limit (int, optional): The maximum number of documents to extract. Defaults to 100.
+
+        Returns:
+            list[Document]: Extracted documents.
+
+        """
+        if source.id is None:
+            msg = "Source must be persisted (have an id) before extracting documents"
+            raise ValueError(msg)
+
+        video_id = self._parse_video_id(source.url)
+        comment_threads = self.client.get_comment_threads(video_id, limit)
+        documents = [self._to_document(source.id, thread) for thread in comment_threads]
+
+        logger.info("Extracted %d document(s) for source_id=%d", len(documents), source.id)
+        return documents
+
+    @staticmethod
+    def _parse_video_id(url: str) -> str:
+        return parse_qs(urlparse(url).query)["v"][0]
+
+    @staticmethod
+    def _to_document(source_id: int, thread: dict[str, Any]) -> Document:
+        thread_snippet = cast("dict[str, Any]", thread["snippet"])
+        top_level_comment = cast("dict[str, Any]", thread_snippet["topLevelComment"])
+        comment_snippet = cast("dict[str, Any]", top_level_comment["snippet"])
+
+        return Document(
+            source_id=source_id,
+            external_id=top_level_comment["id"],
+            text=comment_snippet.get("textDisplay", ""),
+            created_at=datetime.fromisoformat(comment_snippet["publishedAt"]),
+            metadata={
+                "author_display_name": comment_snippet.get("authorDisplayName"),
+                "like_count": comment_snippet.get("likeCount", 0),
+                "total_reply_count": thread_snippet.get("totalReplyCount", 0),
+            },
+        )
 
     @staticmethod
     def _parse_statistics(stats: dict[str, Any]) -> dict[str, int]:
