@@ -22,14 +22,23 @@ class YoutubeClient:
         return build("youtube", "v3", developerKey=self.api_keys[self.current_key_index])
 
     @staticmethod
-    def _is_quota_error(error: HttpError) -> bool:
-        """Check if the error is due to quota exhaustion."""
+    def _has_error_reason(error: HttpError, reason: str) -> bool:
         if error.status_code != HTTPStatus.FORBIDDEN:
             return False
         details = error.error_details
         if not isinstance(details, list):
             return False
-        return any(isinstance(detail, dict) and detail.get("reason") == "quotaExceeded" for detail in details)
+        return any(isinstance(detail, dict) and detail.get("reason") == reason for detail in details)
+
+    @classmethod
+    def _is_quota_error(cls, error: HttpError) -> bool:
+        """Check if the error is due to quota exhaustion."""
+        return cls._has_error_reason(error, "quotaExceeded")
+
+    @classmethod
+    def _is_comments_disabled_error(cls, error: HttpError) -> bool:
+        """Check if the error is due to comments being disabled on the video."""
+        return cls._has_error_reason(error, "commentsDisabled")
 
     def next_key(self) -> bool:
         """Switch to the next API key.
@@ -134,3 +143,55 @@ class YoutubeClient:
                     raise
 
         return video_details
+
+    def get_comment_threads(self, video_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Fetch top-level comment threads for a video.
+
+        Args:
+            video_id (str): The YouTube video ID.
+            limit (int, optional): The maximum number of comment threads to return. Defaults to 100.
+
+        Returns:
+            list[dict[str, Any]]: Comment thread resources, or an empty list if comments are disabled.
+
+        Raises:
+            HttpError: If quota is exceeded and no more API keys available.
+
+        """
+        logger.info("Fetching comment threads for video_id=%s, limit=%d", video_id, limit)
+        results: list[dict[str, Any]] = []
+        next_page_token: str | None = None
+
+        while len(results) < limit:
+            batch_size = min(100, limit - len(results))
+
+            try:
+                request = self.youtube.commentThreads().list(
+                    part="snippet",
+                    videoId=video_id,
+                    maxResults=batch_size,
+                    pageToken=next_page_token,
+                    textFormat="plainText",
+                )
+                response = cast("dict[str, Any]", request.execute())
+            except HttpError as e:
+                if self._is_quota_error(e) and self.next_key():
+                    continue
+                if self._is_comments_disabled_error(e):
+                    logger.info("Comments disabled for video_id=%s", video_id)
+                    return results
+                logger.exception("Failed to fetch comment threads for video_id=%s", video_id)
+                raise
+
+            items = cast("list[dict[str, Any]]", response.get("items", []))
+            if not items:
+                break
+
+            results.extend(items)
+
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token:
+                break
+
+        logger.info("Fetched %d comment thread(s) for video_id=%s", len(results), video_id)
+        return results
