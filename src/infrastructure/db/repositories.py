@@ -1,8 +1,11 @@
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
+from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domain.api_key import ApiKey
 from src.domain.document import Document
 from src.domain.source import Source, SourceType
 from src.infrastructure.db.models import DocumentModel, SourceModel, YoutubeApiKeyModel
