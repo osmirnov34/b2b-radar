@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -16,3 +17,4 @@ class Source(BaseModel):
     url: str
     name: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    extracted_at: datetime | None = None

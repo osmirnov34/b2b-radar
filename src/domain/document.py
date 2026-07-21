@@ -14,3 +14,4 @@ class Document(pydantic.BaseModel):
     text: str
     created_at: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
+    extracted_at: datetime | None = None
