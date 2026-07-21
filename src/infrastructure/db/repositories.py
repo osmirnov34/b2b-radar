@@ -271,3 +271,36 @@ class YoutubeApiKeyRepository:
             select(YoutubeApiKeyModel.key).where(YoutubeApiKeyModel.is_active.is_(True)),
         )
         return list(rows)
+
+    async def list_all(self) -> list[ApiKey]:
+        rows = await self.session.scalars(
+            select(YoutubeApiKeyModel).order_by(
+                case((YoutubeApiKeyModel.is_active, 0), else_=1),
+                YoutubeApiKeyModel.id,
+            ),
+        )
+        return [self._to_domain(model) for model in rows]
+
+    async def add(self, name: str | None, key: str) -> ApiKey:
+        model = YoutubeApiKeyModel(name=name, key=key)
+        self.session.add(model)
+        await self.session.flush()
+        return self._to_domain(model)
+
+    async def set_active(self, key_id: int, *, is_active: bool) -> None:
+        model = await self.session.get(YoutubeApiKeyModel, key_id)
+        if model is None:
+            msg = f"API key {key_id} not found"
+            raise ValueError(msg)
+        model.is_active = is_active
+        await self.session.flush()
+
+    @staticmethod
+    def _to_domain(model: YoutubeApiKeyModel) -> ApiKey:
+        return ApiKey(
+            id=model.id,
+            name=model.name,
+            key=model.key,
+            is_active=model.is_active,
+            created_at=model.created_at,
+        )
