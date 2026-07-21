@@ -159,6 +159,94 @@ class DocumentRepository:
         await self.session.flush()
         return [self._to_domain(model) for model in models]
 
+    async def list_paginated(
+        self,
+        *,
+        search: str | None,
+        source_id: int | None,
+        since: datetime | None,
+        order: Literal["newest", "oldest"],
+        page: int,
+        page_size: int,
+    ) -> tuple[list[DocumentListItem], int]:
+        base_query = select(DocumentModel, SourceModel.name).join(
+            SourceModel,
+            SourceModel.id == DocumentModel.source_id,
+        )
+
+        if search:
+            base_query = base_query.where(DocumentModel.text.ilike(f"%{search}%"))
+        if source_id is not None:
+            base_query = base_query.where(DocumentModel.source_id == source_id)
+        if since is not None:
+            base_query = base_query.where(DocumentModel.extracted_at >= since)
+
+        total = await self.session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
+
+        order_column = DocumentModel.extracted_at.desc() if order == "newest" else DocumentModel.extracted_at.asc()
+        rows = (
+            await self.session.execute(
+                base_query.order_by(order_column).offset((page - 1) * page_size).limit(page_size),
+            )
+        ).all()
+
+        items = [
+            DocumentListItem(document=self._to_domain(model), source_name=source_name) for model, source_name in rows
+        ]
+        return items, total
+
+    async def list_for_source(
+        self,
+        source_id: int,
+        *,
+        search: str | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[Document], int]:
+        base_query = select(DocumentModel).where(DocumentModel.source_id == source_id)
+        if search:
+            base_query = base_query.where(DocumentModel.text.ilike(f"%{search}%"))
+
+        total = await self.session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
+        rows = await self.session.scalars(
+            base_query.order_by(DocumentModel.extracted_at.desc()).offset((page - 1) * page_size).limit(page_size),
+        )
+        return [self._to_domain(model) for model in rows], total
+
+    async def count_all(self) -> int:
+        return await self.session.scalar(select(func.count()).select_from(DocumentModel)) or 0
+
+    async def count_since(self, since: datetime) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count()).select_from(DocumentModel).where(DocumentModel.extracted_at >= since),
+            )
+            or 0
+        )
+
+    async def count_distinct_sources_with_documents(self) -> int:
+        return await self.session.scalar(select(func.count(func.distinct(DocumentModel.source_id)))) or 0
+
+    async def stream_for_export(
+        self,
+        *,
+        search: str | None,
+        since: datetime | None,
+    ) -> AsyncIterator[tuple[DocumentModel, SourceModel]]:
+        """Yield (document, source) pairs matching the filters, without loading the whole result set at once."""
+        query = select(DocumentModel, SourceModel).join(SourceModel, SourceModel.id == DocumentModel.source_id)
+
+        if search:
+            query = query.where(DocumentModel.text.ilike(f"%{search}%"))
+        if since is not None:
+            query = query.where(DocumentModel.extracted_at >= since)
+
+        query = query.order_by(DocumentModel.extracted_at.desc())
+
+        result = await self.session.stream(query)
+        async for document, source in result:
+            yield document, source
+
     @staticmethod
     def _to_domain(model: DocumentModel) -> Document:
         return Document(
