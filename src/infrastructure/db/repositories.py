@@ -256,6 +256,7 @@ class DocumentRepository:
             text=model.text,
             created_at=model.created_at,
             metadata=model.metadata_data,
+            extracted_at=model.extracted_at,
         )
 
 
