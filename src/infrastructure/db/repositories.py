@@ -7,6 +7,28 @@ from src.domain.document import Document
 from src.domain.source import Source, SourceType
 from src.infrastructure.db.models import DocumentModel, SourceModel, YoutubeApiKeyModel
 
+SourceStatus = Literal["all", "processed", "pending"]
+
+
+@dataclass
+class SourceListItem:
+    """A source enriched with its extracted document count, for list/detail views."""
+
+    source: Source
+    document_count: int
+
+    @property
+    def status(self) -> Literal["processed", "pending"]:
+        return "processed" if self.document_count > 0 else "pending"
+
+
+@dataclass
+class DocumentListItem:
+    """A document enriched with its parent source name, for cross-source list views."""
+
+    document: Document
+    source_name: str
+
 
 class SourceRepository:
     """Persists and retrieves Source domain objects."""
