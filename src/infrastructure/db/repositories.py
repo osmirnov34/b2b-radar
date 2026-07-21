@@ -126,6 +126,7 @@ class SourceRepository:
             url=model.url,
             name=model.name,
             metadata=model.metadata_data,
+            extracted_at=model.extracted_at,
         )
 
 
