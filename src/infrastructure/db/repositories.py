@@ -136,7 +136,7 @@ class DocumentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_existing_external_ids(self, external_ids: Sequence[str]) -> set[str]:
+    async def list_existing_external_ids(self, external_ids: Sequence[str]) -> set[str]:
         if not external_ids:
             return set()
         rows = await self.session.scalars(
