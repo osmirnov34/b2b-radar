@@ -45,6 +45,68 @@ class SourceRepository:
             return None
         return self._to_domain(model)
 
+    async def get_with_document_count(self, source_id: int) -> SourceListItem | None:
+        row = (
+            await self.session.execute(
+                select(SourceModel, func.count(DocumentModel.id))
+                .outerjoin(DocumentModel, DocumentModel.source_id == SourceModel.id)
+                .where(SourceModel.id == source_id)
+                .group_by(SourceModel.id),
+            )
+        ).first()
+        if row is None:
+            return None
+        model, document_count = row
+        return SourceListItem(source=self._to_domain(model), document_count=document_count)
+
+    async def list_paginated(
+        self,
+        *,
+        search: str | None,
+        status: SourceStatus,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[SourceListItem], int]:
+        document_count = func.count(DocumentModel.id)
+        base_query = select(SourceModel, document_count).outerjoin(
+            DocumentModel,
+            DocumentModel.source_id == SourceModel.id,
+        )
+
+        if search:
+            pattern = f"%{search}%"
+            base_query = base_query.where(
+                or_(SourceModel.name.ilike(pattern), SourceModel.metadata_data["channel_title"].astext.ilike(pattern)),
+            )
+
+        base_query = base_query.group_by(SourceModel.id)
+        if status == "processed":
+            base_query = base_query.having(document_count > 0)
+        elif status == "pending":
+            base_query = base_query.having(document_count == 0)
+
+        total = await self.session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
+
+        rows = (
+            await self.session.execute(
+                base_query.order_by(SourceModel.extracted_at.desc()).offset((page - 1) * page_size).limit(page_size),
+            )
+        ).all()
+
+        items = [SourceListItem(source=self._to_domain(model), document_count=count) for model, count in rows]
+        return items, total
+
+    async def count_all(self) -> int:
+        return await self.session.scalar(select(func.count()).select_from(SourceModel)) or 0
+
+    async def count_since(self, since: datetime) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count()).select_from(SourceModel).where(SourceModel.extracted_at >= since),
+            )
+            or 0
+        )
+
     async def add(self, source: Source) -> Source:
         model = SourceModel(
             type=source.type,
