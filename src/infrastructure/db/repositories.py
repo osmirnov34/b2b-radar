@@ -265,7 +265,7 @@ class YoutubeApiKeyRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_active_keys(self) -> list[str]:
+    async def list_active_keys(self) -> list[str]:
         rows = await self.session.scalars(
             select(YoutubeApiKeyModel.key).where(YoutubeApiKeyModel.is_active.is_(True)),
         )
