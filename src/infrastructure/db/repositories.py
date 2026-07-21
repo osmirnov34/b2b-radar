@@ -260,7 +260,7 @@ class DocumentRepository:
 
 
 class YoutubeApiKeyRepository:
-    """Reads YouTube API keys managed by an admin."""
+    """Persists and retrieves managed YouTube API keys."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
