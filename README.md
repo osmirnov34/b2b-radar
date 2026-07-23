@@ -22,11 +22,23 @@ alembic upgrade head
 
 ## Development
 
+### Web UI
+
+FastAPI + server-rendered Jinja2 templates, backed by the same Postgres database as the CLI pipeline.
+
+```bash
+uvicorn src.web.app:app --reload --port 8000   # http://127.0.0.1:8000
+```
+
+Pages: dashboard, sources/videos (`/videos`), video detail, comments (`/comments`), API keys (`/api-keys`).
+Adding a source or reprocessing a video triggers `src/pipeline.py` as a background task, so at least one
+active row must exist in `youtube_api_keys` (add one from the `/api-keys` page).
+
 ### Docker
 
 ```bash
 docker-compose build
-docker-compose up
+docker-compose up          # starts postgres, the CLI `app` container, and the `web` UI on :8000
 docker-compose run --rm app bash   # interactive
 ```
 
