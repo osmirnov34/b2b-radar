@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ item.source.name }}{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="/videos">Источники и видео</a>
+  <span class="sep">/</span>
+  <span class="current">{{ item.source.name }}</span>
+</div>
+{% endblock %}
+{% block page_title %}{{ item.source.name }}{% endblock %}
+{% block page_subtitle_wrap %}{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost" href="{{ item.source.url }}" target="_blank" rel="noopener">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>
+  Открыть на YouTube
+</a>
+<form method="post" action="/videos/{{ item.source.id }}/reprocess">
+  <button type="submit" class="btn btn-primary">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>
+    Переобработать
+  </button>
+</form>
+{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-4">
+  <div class="card stat-card">
+    <span class="stat-label">Канал</span>
+    <div style="font-size:14px;font-weight:600">{{ item.source.metadata.get('channel_title', '—') }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Статус</span>
+    <div>
+      {% if item.status == 'processed' %}
+      <span class="status success"><span class="dot"></span>обработано</span>
+      {% else %}
+      <span class="status neutral"><span class="dot"></span>в очереди</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Комментариев извлечено</span>
+    <div class="stat-value" style="font-size:20px">{{ item.document_count | format_number }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Найдено по запросу</span>
+    <div style="font-size:13px;color:var(--text-secondary)">{{ '"' + item.source.metadata.get('search_query') + '"' if item.source.metadata.get('search_query') else '—' }}</div>
+  </div>
+</div>
+
+<div class="card mt-6">
+  <div class="card-header">
+    <div class="card-title">Метаданные источника</div>
+  </div>
+  <div class="card-pad">
+    <div class="grid grid-3">
+      <div>
+        <div class="stat-label" style="margin-bottom:6px">external_id (YouTube)</div>
+        <div class="cell-mono">{{ item.source.url.split('v=')[-1] }}</div>
+      </div>
+      <div>
+        <div class="stat-label" style="margin-bottom:6px">URL</div>
+        <div class="cell-mono">{{ item.source.url }}</div>
+      </div>
+      <div>
+        <div class="stat-label" style="margin-bottom:6px">Добавлено</div>
+        <div class="text-secondary">{{ item.source.extracted_at | humanize_ru }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mt-6">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Извлечённые комментарии</div>
+      <div class="card-title-sub">{{ total | format_number }} комментари{{ 'й' if total == 1 else 'я' if total % 10 in [2,3,4] and total % 100 not in [12,13,14] else 'ев' }}</div>
+    </div>
+    <a href="/comments" class="btn btn-ghost btn-sm">Открыть в общем каталоге</a>
+  </div>
+
+  <form class="filters-bar" method="get" action="/videos/{{ item.source.id }}">
+    <div class="search-box" style="max-width:260px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" name="q" value="{{ q }}" placeholder="Поиск по тексту">
+    </div>
+    <button type="submit" class="btn btn-ghost btn-sm" style="margin-left:auto">Найти</button>
+  </form>
+
+  <div>
+    {% for document in documents %}
+    <div class="comment">
+      <div class="comment-avatar">{{ (document.metadata.get('author_display_name') or '?')[:2].upper() }}</div>
+      <div class="comment-body">
+        <div class="comment-head">
+          <span class="comment-author">{{ document.metadata.get('author_display_name', 'Аноним') }}</span>
+          <span class="comment-time">{{ document.extracted_at | humanize_ru }}</span>
+        </div>
+        <div class="comment-text">{{ document.text }}</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-title">Комментарии ещё не извлечены</div>
+      Нажмите «Переобработать», чтобы запустить извлечение
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="pagination">
+    <div class="pagination-info">Показано {{ ((page - 1) * page_size + 1) if total > 0 else 0 }}–{{ min(page * page_size, total) }} из {{ total | format_number }}</div>
+    <div class="pagination-controls">
+      <a class="btn btn-ghost btn-sm" href="/videos/{{ item.source.id }}?q={{ q | urlencode }}&amp;page={{ page - 1 }}" {% if page <= 1 %}style="pointer-events:none;opacity:0.4"{% endif %}>Назад</a>
+      <a class="btn btn-ghost btn-sm" href="/videos/{{ item.source.id }}?q={{ q | urlencode }}&amp;page={{ page + 1 }}" {% if page * page_size >= total %}style="pointer-events:none;opacity:0.4"{% endif %}>Вперёд</a>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

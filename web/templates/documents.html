@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Комментарии{% endblock %}
+{% block page_title %}Комментарии{% endblock %}
+{% block page_subtitle %}Единый каталог извлечённых комментариев по всем источникам{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost" href="/comments/export.jsonl?q={{ q | urlencode }}&amp;period={{ period }}">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13M6 11l6 6 6-6"/><path d="M5 21h14"/></svg>
+  Экспорт JSONL
+</a>
+{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-3" style="margin-bottom:16px">
+  <div class="card stat-card" style="padding:14px 18px">
+    <span class="stat-label">Всего комментариев</span>
+    <div class="stat-value" style="font-size:20px">{{ total_all | format_number }}</div>
+  </div>
+  <div class="card stat-card" style="padding:14px 18px">
+    <span class="stat-label">За последние 24 часа</span>
+    <div class="stat-value" style="font-size:20px">{{ last_24h | format_number }}</div>
+  </div>
+  <div class="card stat-card" style="padding:14px 18px">
+    <span class="stat-label">Источников с комментариями</span>
+    <div class="stat-value" style="font-size:20px">{{ sources_with_comments | format_number }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <form class="filters-bar" method="get" action="/comments">
+    <div class="search-box" style="max-width:280px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" name="q" value="{{ q }}" placeholder="Поиск по тексту комментария">
+    </div>
+    <div class="divider-v"></div>
+    <select class="select" name="period" onchange="this.form.submit()">
+      <option value="all" {{ 'selected' if period == 'all' }}>За всё время</option>
+      <option value="today" {{ 'selected' if period == 'today' }}>Сегодня</option>
+      <option value="week" {{ 'selected' if period == 'week' }}>7 дней</option>
+      <option value="month" {{ 'selected' if period == 'month' }}>30 дней</option>
+    </select>
+    <select class="select" name="order" style="margin-left:auto" onchange="this.form.submit()">
+      <option value="newest" {{ 'selected' if order == 'newest' }}>Сначала новые</option>
+      <option value="oldest" {{ 'selected' if order == 'oldest' }}>Сначала старые</option>
+    </select>
+    <button type="submit" class="btn btn-ghost btn-sm">Применить</button>
+  </form>
+
+  <div>
+    {% for entry in items %}
+    <div class="comment">
+      <div class="comment-avatar">{{ (entry.document.metadata.get('author_display_name') or '?')[:2].upper() }}</div>
+      <div class="comment-body">
+        <div class="comment-head">
+          <span class="comment-author">{{ entry.document.metadata.get('author_display_name', 'Аноним') }}</span>
+          <a href="/videos/{{ entry.document.source_id }}" class="comment-source">{{ entry.source_name }}</a>
+          <span class="comment-time">{{ entry.document.extracted_at | humanize_ru }}</span>
+        </div>
+        <div class="comment-text">{{ entry.document.text }}</div>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-title">Комментариев не найдено</div>
+      Попробуйте изменить фильтры
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="pagination">
+    <div class="pagination-info">Показано {{ ((page - 1) * page_size + 1) if total > 0 else 0 }}–{{ min(page * page_size, total) }} из {{ total | format_number }}</div>
+    <div class="pagination-controls">
+      <a class="btn btn-ghost btn-sm" href="/comments?q={{ q | urlencode }}&amp;period={{ period }}&amp;order={{ order }}&amp;page={{ page - 1 }}" {% if page <= 1 %}style="pointer-events:none;opacity:0.4"{% endif %}>Назад</a>
+      <a class="btn btn-ghost btn-sm" href="/comments?q={{ q | urlencode }}&amp;period={{ period }}&amp;order={{ order }}&amp;page={{ page + 1 }}" {% if page * page_size >= total %}style="pointer-events:none;opacity:0.4"{% endif %}>Вперёд</a>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

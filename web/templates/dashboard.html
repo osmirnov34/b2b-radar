@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Дашборд{% endblock %}
+{% block page_title %}Дашборд{% endblock %}
+{% block page_subtitle %}Состояние пайплайна извлечения данных{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-primary" href="/videos">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
+  Запустить сбор
+</a>
+{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-4">
+  <div class="card stat-card">
+    <span class="stat-label">Источников</span>
+    <div class="stat-value">{{ sources_total | format_number }}</div>
+    <span class="stat-delta {{ 'up' if sources_new > 0 }}">+{{ sources_new }} за неделю</span>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Обработано видео</span>
+    <div class="stat-value">{{ sources_total | format_number }}</div>
+    <span class="stat-delta {{ 'up' if sources_new > 0 }}">+{{ sources_new }} за неделю</span>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Извлечено комментариев</span>
+    <div class="stat-value">{{ documents_total | format_number }}</div>
+    <span class="stat-delta {{ 'up' if documents_new > 0 }}">+{{ documents_new | format_number }} за неделю</span>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Активные API ключи</span>
+    <div class="stat-value">{{ active_keys_count }} / {{ total_keys_count }}</div>
+    {% if total_keys_count == 0 %}
+    <span class="stat-delta"><a href="/api-keys">добавить ключ</a></span>
+    {% elif active_keys_count < total_keys_count %}
+    <span class="stat-delta down">{{ total_keys_count - active_keys_count }} ключ(ей) отключено</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mt-6">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Недавно обработанные видео</div>
+      <div class="card-title-sub">Последние источники, попавшие в базу</div>
+    </div>
+    <a href="/videos" class="btn btn-ghost btn-sm">Все видео</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Видео</th><th>Канал</th><th class="num">Комментариев</th><th>Статус</th><th>Обновлено</th></tr>
+      </thead>
+      <tbody>
+        {% for item in recent_sources %}
+        <tr class="clickable" onclick="location.href='/videos/{{ item.source.id }}'">
+          <td>
+            <div class="row-flex">
+              <div class="thumb">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              </div>
+              <div>
+                <div class="cell-title">{{ item.source.name }}</div>
+                <div class="cell-sub">yt: {{ item.source.url.split('v=')[-1] }}</div>
+              </div>
+            </div>
+          </td>
+          <td>{{ item.source.metadata.get('channel_title', '—') }}</td>
+          <td class="num">{{ item.document_count | format_number }}</td>
+          <td>
+            {% if item.status == 'processed' %}
+            <span class="status success"><span class="dot"></span>обработано</span>
+            {% else %}
+            <span class="status neutral"><span class="dot"></span>в очереди</span>
+            {% endif %}
+          </td>
+          <td class="text-tertiary">{{ item.source.extracted_at | humanize_ru }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5"><div class="empty-state"><div class="empty-state-title">Пока нет источников</div>Добавьте первый источник на странице «Источники и видео»</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

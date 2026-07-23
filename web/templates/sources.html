@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Источники и видео{% endblock %}
+{% block page_title %}Источники и видео{% endblock %}
+{% block page_subtitle %}Все YouTube-видео, найденные пайплайном{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openModal('modal-add-source')">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
+  Добавить источник
+</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <form class="filters-bar" method="get" action="/videos">
+    <div class="search-box" style="max-width:300px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" name="q" value="{{ q }}" placeholder="Поиск по названию видео или каналу">
+    </div>
+    <div class="divider-v"></div>
+    <a class="chip {{ 'active' if status == 'all' }}" href="/videos?status=all&amp;q={{ q | urlencode }}">Все статусы</a>
+    <a class="chip {{ 'active' if status == 'processed' }}" href="/videos?status=processed&amp;q={{ q | urlencode }}">Обработано</a>
+    <a class="chip {{ 'active' if status == 'pending' }}" href="/videos?status=pending&amp;q={{ q | urlencode }}">В очереди</a>
+    <button type="submit" class="btn btn-ghost btn-sm" style="margin-left:auto">Применить</button>
+  </form>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Видео</th>
+          <th>Канал</th>
+          <th class="num">Комментариев</th>
+          <th>Статус</th>
+          <th>Найдено по запросу</th>
+          <th>Обновлено</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr class="clickable" onclick="location.href='/videos/{{ item.source.id }}'">
+          <td>
+            <div class="row-flex">
+              <div class="thumb">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              </div>
+              <div>
+                <div class="cell-title">{{ item.source.name }}</div>
+                <div class="cell-sub">yt: {{ item.source.url.split('v=')[-1] }}</div>
+              </div>
+            </div>
+          </td>
+          <td>{{ item.source.metadata.get('channel_title', '—') }}</td>
+          <td class="num">{{ item.document_count | format_number }}</td>
+          <td>
+            {% if item.status == 'processed' %}
+            <span class="status success"><span class="dot"></span>обработано</span>
+            {% else %}
+            <span class="status neutral"><span class="dot"></span>в очереди</span>
+            {% endif %}
+          </td>
+          <td class="text-secondary">{{ '"' + item.source.metadata.get('search_query') + '"' if item.source.metadata.get('search_query') else '—' }}</td>
+          <td class="text-tertiary">{{ item.source.extracted_at | humanize_ru }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">Ничего не найдено</div>Попробуйте изменить фильтры или добавьте новый источник</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <div class="pagination-info">Показано {{ ((page - 1) * page_size + 1) if total > 0 else 0 }}–{{ min(page * page_size, total) }} из {{ total }}</div>
+    <div class="pagination-controls">
+      <a class="btn btn-ghost btn-sm" href="/videos?status={{ status }}&amp;q={{ q | urlencode }}&amp;page={{ page - 1 }}" {% if page <= 1 %}style="pointer-events:none;opacity:0.4"{% endif %}>Назад</a>
+      <a class="btn btn-ghost btn-sm" href="/videos?status={{ status }}&amp;q={{ q | urlencode }}&amp;page={{ page + 1 }}" {% if page * page_size >= total %}style="pointer-events:none;opacity:0.4"{% endif %}>Вперёд</a>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block modals %}
+<div class="modal-backdrop hidden" id="modal-add-source">
+  <div class="modal">
+    <form method="post" action="/videos">
+      <div class="modal-header">
+        Добавить источник
+        <button type="button" class="icon-btn" onclick="closeModal('modal-add-source')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Поисковый запрос</label>
+          <input type="text" name="query" required placeholder="например, b2b идеи для бизнеса">
+        </div>
+        <div class="field">
+          <label>Лимит источников</label>
+          <input type="number" name="source_limit" value="50" min="1" max="500">
+        </div>
+        <div class="field">
+          <label>Лимит документов на источник</label>
+          <input type="number" name="document_limit" value="100" min="1" max="1000">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('modal-add-source')">Отмена</button>
+        <button type="submit" class="btn btn-primary">Запустить сбор</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}API ключи{% endblock %}
+{% block page_title %}API ключи YouTube{% endblock %}
+{% block page_subtitle %}Управление ключами YouTube Data API v3{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openModal('modal-add-key')">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
+  Добавить ключ
+</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-3" style="margin-bottom:16px">
+  <div class="card stat-card" style="padding:14px 18px">
+    <span class="stat-label">Всего ключей</span>
+    <div class="stat-value" style="font-size:20px">{{ keys | length }}</div>
+  </div>
+  <div class="card stat-card" style="padding:14px 18px">
+    <span class="stat-label">Активны</span>
+    <div class="stat-value" style="font-size:20px">{{ active_count }}</div>
+  </div>
+  <div class="card stat-card" style="padding:14px 18px">
+    <span class="stat-label">Отключены</span>
+    <div class="stat-value" style="font-size:20px">{{ (keys | length) - active_count }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ключ</th>
+          <th>Название</th>
+          <th>Статус</th>
+          <th>Добавлен</th>
+          <th>Активен</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for key in keys %}
+        <tr>
+          <td class="cell-mono">{{ key.masked_key }}</td>
+          <td class="cell-title">{{ key.name or '—' }}</td>
+          <td>
+            {% if key.is_active %}
+            <span class="status success"><span class="dot"></span>активен</span>
+            {% else %}
+            <span class="status neutral"><span class="dot"></span>отключён</span>
+            {% endif %}
+          </td>
+          <td class="text-tertiary">{{ key.created_at | humanize_ru }}</td>
+          <td>
+            <form method="post" action="/api-keys/{{ key.id }}/toggle">
+              <input type="hidden" name="is_active" value="{{ 'false' if key.is_active else 'true' }}">
+              <button type="submit" class="switch {{ 'on' if key.is_active }}" style="border:none;padding:0">
+                <div class="switch-knob"></div>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5"><div class="empty-state"><div class="empty-state-title">Ключей ещё нет</div>Добавьте хотя бы один активный ключ, чтобы пайплайн мог обращаться к YouTube Data API</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block modals %}
+<div class="modal-backdrop hidden" id="modal-add-key">
+  <div class="modal">
+    <form method="post" action="/api-keys">
+      <div class="modal-header">
+        Добавить API ключ
+        <button type="button" class="icon-btn" onclick="closeModal('modal-add-key')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Название</label>
+          <input type="text" name="name" placeholder="например, YT-KEY-06">
+        </div>
+        <div class="field">
+          <label>Значение ключа</label>
+          <input type="text" name="key" required placeholder="AIzaSy...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('modal-add-key')">Отмена</button>
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
