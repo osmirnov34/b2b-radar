@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-b2b_radar}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-b2b_radar}
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -17,9 +17,24 @@ services:
   app:
     build: .
     container_name: b2b-radar
+    env_file:
+      - .env
     environment:
       - PYTHONUNBUFFERED=1
     stdin_open: true
     tty: true
+  web:
+    build: .
+    container_name: b2b-radar-web
+    command: uvicorn src.web.app:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 volumes:
   postgres_data:
