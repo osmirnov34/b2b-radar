@@ -44,6 +44,7 @@ class YoutubeApiKeyModel(Base):
     __tablename__ = "youtube_api_keys"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str | None] = mapped_column(String(255))
     key: Mapped[str] = mapped_column(String(255), unique=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
