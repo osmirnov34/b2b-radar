@@ -22,6 +22,7 @@ class DocumentModel(Base):
     text: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     metadata_data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class SourceModel(Base):
@@ -34,6 +35,7 @@ class SourceModel(Base):
     url: Mapped[str] = mapped_column(String(2048), unique=True)
     name: Mapped[str] = mapped_column(String(255))
     metadata_data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class YoutubeApiKeyModel(Base):
