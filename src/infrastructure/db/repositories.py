@@ -201,11 +201,11 @@ class DocumentRepository:
         if source_id is not None:
             base_query = base_query.where(DocumentModel.source_id == source_id)
         if since is not None:
-            base_query = base_query.where(DocumentModel.extracted_at >= since)
+            base_query = base_query.where(DocumentModel.created_at >= since)
 
         total = await self.session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
 
-        order_column = DocumentModel.extracted_at.desc() if order == "newest" else DocumentModel.extracted_at.asc()
+        order_column = DocumentModel.created_at.desc() if order == "newest" else DocumentModel.created_at.asc()
         rows = (
             await self.session.execute(
                 base_query.order_by(order_column).offset((page - 1) * page_size).limit(page_size),
@@ -231,7 +231,7 @@ class DocumentRepository:
 
         total = await self.session.scalar(select(func.count()).select_from(base_query.subquery())) or 0
         rows = await self.session.scalars(
-            base_query.order_by(DocumentModel.extracted_at.desc()).offset((page - 1) * page_size).limit(page_size),
+            base_query.order_by(DocumentModel.created_at.desc()).offset((page - 1) * page_size).limit(page_size),
         )
         return [self._to_domain(model) for model in rows], total
 
@@ -261,9 +261,9 @@ class DocumentRepository:
         if search:
             query = query.where(DocumentModel.text.ilike(f"%{search}%"))
         if since is not None:
-            query = query.where(DocumentModel.extracted_at >= since)
+            query = query.where(DocumentModel.created_at >= since)
 
-        query = query.order_by(DocumentModel.extracted_at.desc())
+        query = query.order_by(DocumentModel.created_at.desc())
 
         result = await self.session.stream(query)
         async for document, source in result:
