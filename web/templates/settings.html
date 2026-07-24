@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Критерии качества{% endblock %}
+{% block page_title %}Критерии качества{% endblock %}
+{% block page_subtitle %}Пороги, по которым видео и комментарии отбираются при сборе данных{% endblock %}
+
+{% macro number_field(name, label, value, hint, unit="", placeholder="0") %}
+<div class="field">
+  <label for="{{ name }}">{{ label }}</label>
+  <div class="input-affix">
+    <input type="number" min="0" step="1" id="{{ name }}" name="{{ name }}"
+           value="{{ value }}" placeholder="{{ placeholder }}" inputmode="numeric">
+    {% if unit %}<span class="affix">{{ unit }}</span>{% endif %}
+  </div>
+  <div class="field-hint">{{ hint }}</div>
+</div>
+{% endmacro %}
+
+{% block topbar_actions %}
+<button type="submit" form="settings-form" class="btn btn-primary">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12.5 9.5 17 19 6.5"/></svg>
+  Сохранить
+</button>
+{% endblock %}
+
+{% block content %}
+
+<form id="settings-form" method="post" action="/settings" class="form-stack">
+
+  <div class="callout">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.5" r="0.6" fill="currentColor"/></svg>
+    <div>Порог <b>0</b> отключает проверку. Условия работают по правилу «не меньше» (для возраста — «не старше») и применяются при добавлении источника и повторной обработке. Уже сохранённые данные не затрагиваются.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="section-head">
+        <div class="section-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 9.5 22 6v12l-5-3.5"/></svg>
+        </div>
+        <div>
+          <div class="card-title">Видео</div>
+          <div class="card-title-sub">Оставлять только ролики с достаточной аудиторией и вовлечённостью</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-pad">
+      <div class="form-grid">
+        {{ number_field("source_min_views", "Минимум просмотров", settings.source_min_views,
+           "Отсекает малопросматриваемые ролики", placeholder="напр. 5000") }}
+        {{ number_field("source_min_likes", "Минимум лайков", settings.source_min_likes,
+           "Сигнал того, что контент полезен зрителям", placeholder="напр. 100") }}
+        {{ number_field("source_min_comments", "Минимум комментариев", settings.source_min_comments,
+           "Обсуждаемость = больше идей в комментариях", placeholder="напр. 20") }}
+        {{ number_field("source_min_duration_seconds", "Минимальная длительность", settings.source_min_duration_seconds,
+           "Отсекает Shorts и короткие обрывки", unit="сек", placeholder="напр. 60") }}
+        {{ number_field("source_max_age_days", "Максимальный возраст", settings.source_max_age_days,
+           "Оставляет только актуальные ролики", unit="дней", placeholder="напр. 365") }}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="section-head">
+        <div class="section-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 1 1-3.4-6.5L21 4l-1 4.5"/><path d="M8 10h8M8 14h5"/></svg>
+        </div>
+        <div>
+          <div class="card-title">Комментарии</div>
+          <div class="card-title-sub">Оставлять только содержательные комментарии, отсеивая спам и односложные реакции</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-pad">
+      <div class="form-grid">
+        {{ number_field("document_min_likes", "Минимум лайков", settings.document_min_likes,
+           "Социальное подтверждение полезности", placeholder="напр. 3") }}
+        {{ number_field("document_min_length", "Минимальная длина", settings.document_min_length,
+           "Отсекает «круто!» и эмодзи-спам", unit="симв.", placeholder="напр. 40") }}
+        {{ number_field("document_min_replies", "Минимум ответов", settings.document_min_replies,
+           "Комментарий вызвал обсуждение в ветке", placeholder="напр. 1") }}
+      </div>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <span class="hint">Изменения вступят в силу при следующем сборе</span>
+    <button type="submit" class="btn btn-primary">Сохранить критерии</button>
+  </div>
+
+</form>
+
+{% endblock %}
