@@ -102,7 +102,11 @@ async def _build_extractor() -> YoutubeExtractor:
 
 async def run(query: str, source_limit: int, document_limit: int) -> None:
     """Run the full pipeline: discover sources for a query, then extract their documents."""
-    extractor = await _build_extractor()
+    try:
+        extractor = await _build_extractor()
+    except RuntimeError:
+        logger.exception("Pipeline run aborted for query=%r", query)
+        return
 
     async with get_session() as session:
         ctx = _IngestContext(
@@ -123,7 +127,14 @@ async def run(query: str, source_limit: int, document_limit: int) -> None:
 
 async def reprocess_source(source_id: int, document_limit: int) -> None:
     """Re-run document extraction for a single, already-persisted source."""
-    extractor = await _build_extractor()
+    try:
+        extractor = await _build_extractor()
+    except RuntimeError as exc:
+        logger.exception("Reprocessing aborted for source_id=%d", source_id)
+        async with get_session() as session:
+            await SourceRepository(session).set_ingest_status(source_id, IngestStatus.FAILED, str(exc))
+            await session.commit()
+        return
 
     async with get_session() as session:
         ctx = _IngestContext(
