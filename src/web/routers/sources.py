@@ -14,6 +14,19 @@ router = APIRouter()
 PAGE_SIZE = 20
 
 NO_ACTIVE_KEYS_ERROR = "no_active_keys"
+EMPTY_QUERY_ERROR = "empty_query"
+
+
+def _parse_queries(raw: str) -> list[str]:
+    """Split a textarea value into distinct, trimmed search queries (one per line)."""
+    seen: set[str] = set()
+    queries: list[str] = []
+    for line in raw.splitlines():
+        query = line.strip()
+        if query and query not in seen:
+            seen.add(query)
+            queries.append(query)
+    return queries
 
 
 @router.get("/videos", response_class=HTMLResponse)
@@ -50,10 +63,16 @@ async def add_source(
     source_limit: Annotated[int, Form()] = 50,
     document_limit: Annotated[int, Form()] = 100,
 ) -> RedirectResponse:
+    queries = _parse_queries(query)
+    if not queries:
+        return RedirectResponse(url=f"/videos?error={EMPTY_QUERY_ERROR}", status_code=303)
+
     active_keys = await YoutubeApiKeyRepository(session).list_active_keys()
     if not active_keys:
         return RedirectResponse(url=f"/videos?error={NO_ACTIVE_KEYS_ERROR}", status_code=303)
-    background_tasks.add_task(run, query, source_limit, document_limit)
+
+    for single_query in queries:
+        background_tasks.add_task(run, single_query, source_limit, document_limit)
     return RedirectResponse(url="/videos", status_code=303)
 
 

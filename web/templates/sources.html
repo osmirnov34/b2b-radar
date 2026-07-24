@@ -14,6 +14,8 @@
 
 {% if error == 'no_active_keys' %}
 <div class="banner danger">Нет активных ключей YouTube API. Добавьте ключ на странице «API ключи», чтобы запустить сбор.</div>
+{% elif error == 'empty_query' %}
+<div class="banner danger">Укажите хотя бы один поисковый запрос.</div>
 {% endif %}
 
 <div class="card">
@@ -101,8 +103,8 @@
       </div>
       <div class="modal-body">
         <div class="field">
-          <label>Поисковый запрос</label>
-          <input type="text" name="query" required placeholder="например, идеи для B2B-бизнеса">
+          <label>Поисковые запросы <span class="text-tertiary">(по одному на строку)</span></label>
+          <textarea name="query" rows="6" required placeholder="расчет кухни excel&#10;себестоимость мебели&#10;раскрой лдсп программа"></textarea>
         </div>
         <div class="field">
           <label>Сколько видео собрать</label>

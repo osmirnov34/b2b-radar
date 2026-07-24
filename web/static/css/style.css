@@ -684,14 +684,15 @@ tbody tr.clickable { cursor: pointer; }
 .modal-body { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); }
 .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
-.field input, .field select {
+.field input, .field select, .field textarea {
   width: 100%; background: var(--input-bg); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); padding: 8px 11px; color: var(--text);
   font-family: inherit; font-size: 12.5px; outline: none;
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.field input:focus, .field select:focus { border-color: var(--accent); box-shadow: var(--ring); }
-.field input::placeholder { color: var(--text-tertiary); }
+.field textarea { resize: vertical; line-height: 1.5; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); box-shadow: var(--ring); }
+.field input::placeholder, .field textarea::placeholder { color: var(--text-tertiary); }
 .hidden { display: none !important; }
 
 /* Breadcrumb */
