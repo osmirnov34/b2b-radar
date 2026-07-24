@@ -1,0 +1,29 @@
+{% macro render_replies(metadata) %}
+{% set replies = metadata.get('replies') or [] %}
+{% if replies %}
+{% set shown = replies | length %}
+{% set total = metadata.get('total_reply_count', 0) %}
+<details class="comment-replies">
+  <summary class="comment-replies-summary">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 17H7A4 4 0 0 1 7 9h1"/><path d="M15 7h2a4 4 0 0 1 0 8h-1"/><path d="M8 12h8"/></svg>
+    Ответы: {{ shown }}{% if total > shown %} из {{ total }}{% endif %}
+  </summary>
+  <div class="comment-replies-list">
+    {% for reply in replies %}
+    <div class="comment-reply">
+      <div class="comment-reply-head">
+        <span class="comment-author">{{ reply.get('author_display_name') or 'Аноним' }}</span>
+        {% if reply.get('like_count') %}
+        <span class="comment-reply-likes">▲ {{ reply.get('like_count') | format_number }}</span>
+        {% endif %}
+      </div>
+      <div class="comment-text">{{ reply.get('text') }}</div>
+    </div>
+    {% endfor %}
+    {% if total > shown %}
+    <div class="comment-reply-more">Ещё {{ total - shown }} — на YouTube (в базу берём только первые 5, чтобы не тратить квоту)</div>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+{% endmacro %}
