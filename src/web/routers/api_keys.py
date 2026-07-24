@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy.exc import IntegrityError
 
 from src.infrastructure.db.repositories import YoutubeApiKeyRepository
 from src.web.dependencies import SessionDep
@@ -10,9 +11,11 @@ from src.web.templating import templates
 
 router = APIRouter()
 
+DUPLICATE_KEY_ERROR = "duplicate_key"
+
 
 @router.get("/api-keys", response_class=HTMLResponse)
-async def list_api_keys(request: Request, session: SessionDep) -> HTMLResponse:
+async def list_api_keys(request: Request, session: SessionDep, error: str | None = None) -> HTMLResponse:
     repo = YoutubeApiKeyRepository(session)
     keys = await repo.list_all()
 
@@ -20,6 +23,7 @@ async def list_api_keys(request: Request, session: SessionDep) -> HTMLResponse:
         "request": request,
         "keys": keys,
         "active_count": sum(1 for key in keys if key.is_active),
+        "error": error,
         **await nav_context(session),
     }
     return templates.TemplateResponse(request, "api_keys.html", context)
@@ -31,8 +35,12 @@ async def add_api_key(
     name: Annotated[str, Form()],
     key: Annotated[str, Form()],
 ) -> RedirectResponse:
-    await YoutubeApiKeyRepository(session).add(name or None, key)
-    await session.commit()
+    try:
+        await YoutubeApiKeyRepository(session).add(name or None, key)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return RedirectResponse(url=f"/api-keys?error={DUPLICATE_KEY_ERROR}", status_code=303)
     return RedirectResponse(url="/api-keys", status_code=303)
 
 

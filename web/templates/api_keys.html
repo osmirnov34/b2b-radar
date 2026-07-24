@@ -12,6 +12,10 @@
 
 {% block content %}
 
+{% if error == 'duplicate_key' %}
+<div class="banner danger">Этот ключ уже добавлен.</div>
+{% endif %}
+
 <div class="grid grid-3" style="margin-bottom:16px">
   <div class="card stat-card" style="padding:14px 18px">
     <span class="stat-label">Всего ключей</span>
