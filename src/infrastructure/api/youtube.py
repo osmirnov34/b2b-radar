@@ -132,6 +132,8 @@ class YoutubeClient:
                     type="video",
                     pageToken=next_page_token,
                     order="relevance",
+                    relevanceLanguage="ru",
+                    regionCode="RU",
                 )
                 response = self._execute_with_retry(request)
             except HttpError as e:
