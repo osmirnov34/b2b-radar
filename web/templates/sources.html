@@ -54,7 +54,11 @@
           <td>{{ item.source.metadata.get('channel_title', '—') }}</td>
           <td class="num">{{ item.document_count | format_number }}</td>
           <td>
-            {% if item.status == 'processed' %}
+            {% if item.source.ingest_status == 'failed' %}
+            <span class="status danger" title="{{ item.source.ingest_error }}"><span class="dot"></span>ошибка</span>
+            {% elif item.source.ingest_status == 'running' %}
+            <span class="status warning"><span class="dot"></span>идёт сбор</span>
+            {% elif item.document_count > 0 %}
             <span class="status success"><span class="dot"></span>обработано</span>
             {% else %}
             <span class="status neutral"><span class="dot"></span>в очереди</span>

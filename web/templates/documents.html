@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_replies.html" as replies_macro %}
 {% block title %}Комментарии{% endblock %}
 {% block page_title %}Комментарии{% endblock %}
 {% block page_subtitle %}Единый каталог извлечённых комментариев по всем источникам{% endblock %}
@@ -58,6 +59,7 @@
           <span class="comment-time">{{ entry.document.extracted_at | humanize_ru }}</span>
         </div>
         <div class="comment-text">{{ entry.document.text }}</div>
+        {{ replies_macro.render_replies(entry.document.metadata) }}
       </div>
     </div>
     {% else %}

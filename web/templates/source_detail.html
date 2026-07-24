@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_replies.html" as replies_macro %}
 {% block title %}{{ item.source.name }}{% endblock %}
 
 {% block breadcrumb %}
@@ -34,12 +35,19 @@
   <div class="card stat-card">
     <span class="stat-label">Статус</span>
     <div>
-      {% if item.status == 'processed' %}
+      {% if item.source.ingest_status == 'failed' %}
+      <span class="status danger"><span class="dot"></span>ошибка</span>
+      {% elif item.source.ingest_status == 'running' %}
+      <span class="status warning"><span class="dot"></span>идёт сбор</span>
+      {% elif item.document_count > 0 %}
       <span class="status success"><span class="dot"></span>обработано</span>
       {% else %}
       <span class="status neutral"><span class="dot"></span>в очереди</span>
       {% endif %}
     </div>
+    {% if item.source.ingest_status == 'failed' and item.source.ingest_error %}
+    <div class="text-tertiary" style="font-size:11px;margin-top:4px">{{ item.source.ingest_error }}</div>
+    {% endif %}
   </div>
   <div class="card stat-card">
     <span class="stat-label">Комментариев извлечено</span>
@@ -100,6 +108,7 @@
           <span class="comment-time">{{ document.extracted_at | humanize_ru }}</span>
         </div>
         <div class="comment-text">{{ document.text }}</div>
+        {{ replies_macro.render_replies(document.metadata) }}
       </div>
     </div>
     {% else %}
