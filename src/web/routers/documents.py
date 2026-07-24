@@ -84,6 +84,8 @@ async def export_documents_jsonl(
                     "comment_author": document.metadata_data.get("author_display_name"),
                     "comment_like_count": document.metadata_data.get("like_count"),
                     "comment_published_at": document.created_at.isoformat(),
+                    "comment_total_reply_count": document.metadata_data.get("total_reply_count"),
+                    "comment_replies": document.metadata_data.get("replies", []),
                 }
                 yield (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
 
