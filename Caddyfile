@@ -1,4 +1,8 @@
-{$DOMAIN} {
+{$DOMAIN}:8443 {
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+	}
+
 	basic_auth {
 		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 	}
