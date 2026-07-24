@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from src.infrastructure.db.repositories import DocumentRepository, SourceRepository
+from src.infrastructure.db.repositories import DocumentRepository, SourceRepository, YoutubeApiKeyRepository
 from src.pipeline import reprocess_source, run
 from src.web.dependencies import SessionDep
 from src.web.nav import nav_context
@@ -13,6 +13,8 @@ router = APIRouter()
 
 PAGE_SIZE = 20
 
+NO_ACTIVE_KEYS_ERROR = "no_active_keys"
+
 
 @router.get("/videos", response_class=HTMLResponse)
 async def list_sources(
@@ -21,6 +23,7 @@ async def list_sources(
     q: str | None = None,
     status: Literal["all", "processed", "pending"] = "all",
     page: int = 1,
+    error: str | None = None,
 ) -> HTMLResponse:
     source_repo = SourceRepository(session)
     items, total = await source_repo.list_paginated(search=q, status=status, page=page, page_size=PAGE_SIZE)
@@ -33,6 +36,7 @@ async def list_sources(
         "page_size": PAGE_SIZE,
         "q": q or "",
         "status": status,
+        "error": error,
         **await nav_context(session),
     }
     return templates.TemplateResponse(request, "sources.html", context)
@@ -41,10 +45,14 @@ async def list_sources(
 @router.post("/videos")
 async def add_source(
     background_tasks: BackgroundTasks,
+    session: SessionDep,
     query: Annotated[str, Form()],
     source_limit: Annotated[int, Form()] = 50,
     document_limit: Annotated[int, Form()] = 100,
 ) -> RedirectResponse:
+    active_keys = await YoutubeApiKeyRepository(session).list_active_keys()
+    if not active_keys:
+        return RedirectResponse(url=f"/videos?error={NO_ACTIVE_KEYS_ERROR}", status_code=303)
     background_tasks.add_task(run, query, source_limit, document_limit)
     return RedirectResponse(url="/videos", status_code=303)
 
@@ -56,6 +64,7 @@ async def source_detail(
     source_id: int,
     q: str | None = None,
     page: int = 1,
+    error: str | None = None,
 ) -> HTMLResponse:
     source_repo = SourceRepository(session)
     item = await source_repo.get_with_document_count(source_id)
@@ -71,6 +80,7 @@ async def source_detail(
         "documents": documents,
         "total": total,
         "page": page,
+        "error": error,
         "page_size": PAGE_SIZE,
         "q": q or "",
         **await nav_context(session),
@@ -81,8 +91,12 @@ async def source_detail(
 @router.post("/videos/{source_id}/reprocess")
 async def reprocess(
     background_tasks: BackgroundTasks,
+    session: SessionDep,
     source_id: int,
     document_limit: Annotated[int, Form()] = 100,
 ) -> RedirectResponse:
+    active_keys = await YoutubeApiKeyRepository(session).list_active_keys()
+    if not active_keys:
+        return RedirectResponse(url=f"/videos/{source_id}?error={NO_ACTIVE_KEYS_ERROR}", status_code=303)
     background_tasks.add_task(reprocess_source, source_id, document_limit)
     return RedirectResponse(url=f"/videos/{source_id}", status_code=303)
