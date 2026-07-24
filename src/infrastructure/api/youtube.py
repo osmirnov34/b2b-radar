@@ -1,11 +1,23 @@
 import logging
+import socket
+import ssl
+import time
 from http import HTTPStatus
+from http.client import HTTPException
 from typing import Any, cast
 
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import HttpRequest
 
 logger = logging.getLogger(__name__)
+
+# Transient HTTP statuses that are safe to retry (server-side / rate-limit hiccups).
+_RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
+# Network-level failures raised before any HTTP response is available.
+_RETRYABLE_NETWORK_ERRORS = (socket.timeout, ConnectionError, TimeoutError, ssl.SSLError, HTTPException)
+_MAX_ATTEMPTS = 4
+_INITIAL_BACKOFF_SECONDS = 1.0
 
 
 class YoutubeClient:
@@ -20,6 +32,42 @@ class YoutubeClient:
     def _build_client(self) -> Resource:
         logger.debug("Building YouTube client with key index %s", self.current_key_index)
         return build("youtube", "v3", developerKey=self.api_keys[self.current_key_index])
+
+    @staticmethod
+    def _execute_with_retry(request: HttpRequest) -> dict[str, Any]:
+        """Execute a YouTube API request, retrying transient 5xx and network errors with backoff.
+
+        Quota (``quotaExceeded``) and ``commentsDisabled`` are 403s and are never retried here;
+        they are re-raised for the caller to handle (key rotation / graceful skip).
+        """
+        backoff = _INITIAL_BACKOFF_SECONDS
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                return cast("dict[str, Any]", request.execute())
+            except HttpError as error:
+                if error.status_code not in _RETRYABLE_STATUSES or attempt == _MAX_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "Transient YouTube API error (status=%s), attempt %d/%d, retrying in %.1fs",
+                    error.status_code,
+                    attempt,
+                    _MAX_ATTEMPTS,
+                    backoff,
+                )
+            except _RETRYABLE_NETWORK_ERRORS as error:
+                if attempt == _MAX_ATTEMPTS:
+                    raise
+                logger.warning(
+                    "Transient network error (%s), attempt %d/%d, retrying in %.1fs",
+                    type(error).__name__,
+                    attempt,
+                    _MAX_ATTEMPTS,
+                    backoff,
+                )
+            time.sleep(backoff)
+            backoff *= 2
+        msg = "Retry loop exited without returning a response"  # pragma: no cover - defensive
+        raise RuntimeError(msg)  # pragma: no cover
 
     @staticmethod
     def _has_error_reason(error: HttpError, reason: str) -> bool:
@@ -85,7 +133,7 @@ class YoutubeClient:
                     pageToken=next_page_token,
                     order="relevance",
                 )
-                response = cast("dict[str, Any]", request.execute())
+                response = self._execute_with_retry(request)
             except HttpError as e:
                 if self._is_quota_error(e) and self.next_key():
                     continue
@@ -131,7 +179,7 @@ class YoutubeClient:
                         id=",".join(batch_ids),
                         part="snippet,statistics,contentDetails",
                     )
-                    response = cast("dict[str, Any]", request.execute())
+                    response = self._execute_with_retry(request)
                     items = cast("list[dict[str, Any]]", response.get("items", []))
                     video_details.extend(items)
                     break
@@ -167,13 +215,13 @@ class YoutubeClient:
 
             try:
                 request = self.youtube.commentThreads().list(
-                    part="snippet",
+                    part="snippet,replies",
                     videoId=video_id,
                     maxResults=batch_size,
                     pageToken=next_page_token,
                     textFormat="plainText",
                 )
-                response = cast("dict[str, Any]", request.execute())
+                response = self._execute_with_retry(request)
             except HttpError as e:
                 if self._is_quota_error(e) and self.next_key():
                     continue
