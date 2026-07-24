@@ -21,6 +21,7 @@ async def dashboard(request: Request, session: SessionDep) -> HTMLResponse:
 
     sources_total = await source_repo.count_all()
     sources_new = await source_repo.count_since(since)
+    processed_sources = await document_repo.count_distinct_sources_with_documents()
     documents_total = await document_repo.count_all()
     documents_new = await document_repo.count_since(since)
     api_keys = await api_key_repo.list_all()
@@ -32,6 +33,7 @@ async def dashboard(request: Request, session: SessionDep) -> HTMLResponse:
         "request": request,
         "sources_total": sources_total,
         "sources_new": sources_new,
+        "processed_sources": processed_sources,
         "documents_total": documents_total,
         "documents_new": documents_new,
         "active_keys_count": len(active_keys),
