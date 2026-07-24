@@ -35,6 +35,8 @@ class SourceModel(Base):
     url: Mapped[str] = mapped_column(String(2048), unique=True)
     name: Mapped[str] = mapped_column(String(255))
     metadata_data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    ingest_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending", index=True)
+    ingest_error: Mapped[str | None] = mapped_column(default=None)
     extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
