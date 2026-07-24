@@ -51,7 +51,9 @@ async def _save_sources(ctx: _IngestContext, query: str, limit: int) -> list[Sou
 async def _extract_documents_for_source(ctx: _IngestContext, source: Source, limit: int) -> int:
     # extract_documents performs blocking network I/O; run it off the event loop.
     extracted = await asyncio.to_thread(ctx.extractor.extract_documents, source, limit)
-    documents = [document for document in extracted if ctx.quality_filter.accepts_comment(document)]
+    filtered = [document for document in extracted if ctx.quality_filter.accepts_comment(document)]
+    # YouTube can return the same (often pinned) comment twice across pages of the same batch.
+    documents = list({document.external_id: document for document in filtered}.values())
     if not documents:
         return 0
 
