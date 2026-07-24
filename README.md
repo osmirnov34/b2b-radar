@@ -61,6 +61,20 @@ alembic current / alembic history                      # inspect
 
 Related tables can share one migration (e.g. FK dependencies) as long as `upgrade`/`downgrade` order respects them. Otherwise, one migration per change — don't edit an already-applied one.
 
+### Deployment (Caddy + HTTP Basic Auth)
+
+The `caddy` service (under the `prod` [profile](https://docs.docker.com/compose/how-tos/profiles/), so it's skipped in local dev) reverse-proxies the `web` UI behind HTTP Basic Auth and terminates HTTPS via Let's Encrypt. Requires the domain's DNS pointed at the host with ports 80/443 open. Config lives in `Caddyfile`.
+
+```bash
+# generate a bcrypt hash for BASIC_AUTH_HASH (keep the plaintext out of .env)
+docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password'
+
+# set DOMAIN, BASIC_AUTH_USER, BASIC_AUTH_HASH in .env, then:
+docker-compose --profile prod up -d postgres web caddy
+```
+
+To rotate the password, regenerate the hash, update `BASIC_AUTH_HASH`, and run `docker-compose restart caddy`.
+
 ### Code Quality
 
 pre-commit runs Ruff + mypy (strict) on `git commit`.
