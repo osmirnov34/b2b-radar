@@ -30,9 +30,15 @@ FastAPI + server-rendered Jinja2 templates, backed by the same Postgres database
 uvicorn src.web.app:app --reload --port 8000   # http://127.0.0.1:8000
 ```
 
-Pages: dashboard, sources/videos (`/videos`), video detail, comments (`/comments`), API keys (`/api-keys`).
-Adding a source or reprocessing a video triggers `src/pipeline.py` as a background task, so at least one
-active row must exist in `youtube_api_keys` (add one from the `/api-keys` page).
+Pages: dashboard, sources/videos (`/videos`), video detail, comments (`/comments`), API keys (`/api-keys`),
+quality criteria (`/settings`). Adding a source or reprocessing triggers `src/pipeline.py` in background.
+
+Quality filters (min/max views/likes/comments/duration for videos; likes/length/replies for comments)
+are applied in the pipeline before persisting. Each source tracks `ingest_status` (pending/running/success/failed).
+
+The pipeline fetches up to 5 replies per comment via YouTube API (`part=snippet,replies`); all replies
+are shown collapsed under comments on detail and `/comments` pages and included in JSONL export
+(`comment_replies`, `comment_total_reply_count`).
 
 ### Docker
 
