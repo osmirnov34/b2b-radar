@@ -78,8 +78,30 @@ class YoutubeExtractor(Extractor):
                 "author_display_name": comment_snippet.get("authorDisplayName"),
                 "like_count": comment_snippet.get("likeCount", 0),
                 "total_reply_count": thread_snippet.get("totalReplyCount", 0),
+                "replies": YoutubeExtractor._parse_replies(thread),
             },
         )
+
+    @staticmethod
+    def _parse_replies(thread: dict[str, Any]) -> list[dict[str, Any]]:
+        """Map the up-to-5 inline replies returned by commentThreads into lightweight dicts.
+
+        These come free with ``part=snippet,replies``; ``total_reply_count`` may exceed this list.
+        """
+        replies = cast("dict[str, Any]", thread.get("replies", {}))
+        comments = cast("list[dict[str, Any]]", replies.get("comments", []))
+        parsed: list[dict[str, Any]] = []
+        for comment in comments:
+            snippet = cast("dict[str, Any]", comment.get("snippet", {}))
+            parsed.append(
+                {
+                    "author_display_name": snippet.get("authorDisplayName"),
+                    "text": snippet.get("textDisplay", ""),
+                    "like_count": snippet.get("likeCount", 0),
+                    "published_at": snippet.get("publishedAt"),
+                },
+            )
+        return parsed
 
     @staticmethod
     def _parse_statistics(stats: dict[str, Any]) -> dict[str, int]:
