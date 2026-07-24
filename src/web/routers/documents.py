@@ -2,6 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -16,6 +17,11 @@ router = APIRouter()
 
 PAGE_SIZE = 20
 _PERIOD_DAYS: dict[str, int | None] = {"all": None, "today": 1, "week": 7, "month": 30}
+
+
+def _extract_video_id(url: str) -> str | None:
+    """Pull the ``v`` query parameter out of a YouTube watch URL."""
+    return parse_qs(urlparse(url).query).get("v", [None])[0]
 
 
 @router.get("/comments", response_class=HTMLResponse)
@@ -78,13 +84,14 @@ async def export_documents_jsonl(
                     "video_description": source.metadata_data.get("description"),
                     "video_channel": source.metadata_data.get("channel_title"),
                     "video_url": source.url,
+                    "video_id": _extract_video_id(source.url),
                     "search_query": source.metadata_data.get("search_query"),
                     "comment_id": document.external_id,
                     "comment_text": document.text,
                     "comment_author": document.metadata_data.get("author_display_name"),
-                    "comment_like_count": document.metadata_data.get("like_count"),
+                    "comment_like_count": document.metadata_data.get("like_count") or 0,
                     "comment_published_at": document.created_at.isoformat(),
-                    "comment_total_reply_count": document.metadata_data.get("total_reply_count"),
+                    "comment_total_reply_count": document.metadata_data.get("total_reply_count") or 0,
                     "comment_replies": document.metadata_data.get("replies", []),
                 }
                 yield (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
