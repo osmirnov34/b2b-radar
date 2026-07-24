@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domain.api_key import ApiKey
 from src.domain.document import Document
 from src.domain.filter_settings import FilterSettings
-from src.domain.source import Source, SourceType
+from src.domain.source import IngestStatus, Source, SourceType
 from src.infrastructure.db.models import (
     DocumentModel,
     FilterSettingsModel,
@@ -128,6 +128,16 @@ class SourceRepository:
         await self.session.flush()
         return self._to_domain(model)
 
+    async def set_ingest_status(self, source_id: int, status: IngestStatus, error: str | None = None) -> None:
+        """Record the outcome of a source's document extraction so the UI can surface progress/failures."""
+        model = await self.session.get(SourceModel, source_id)
+        if model is None:
+            msg = f"Source {source_id} not found"
+            raise ValueError(msg)
+        model.ingest_status = status
+        model.ingest_error = error
+        await self.session.flush()
+
     @staticmethod
     def _to_domain(model: SourceModel) -> Source:
         return Source(
@@ -136,6 +146,8 @@ class SourceRepository:
             url=model.url,
             name=model.name,
             metadata=model.metadata_data,
+            ingest_status=IngestStatus(model.ingest_status),
+            ingest_error=model.ingest_error,
             extracted_at=model.extracted_at,
         )
 
