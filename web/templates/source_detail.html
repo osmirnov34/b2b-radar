@@ -4,7 +4,7 @@
 
 {% block breadcrumb %}
 <div class="breadcrumb">
-  <a href="/videos">Источники и видео</a>
+  <a href="/videos">Видео</a>
   <span class="sep">/</span>
   <span class="current">{{ item.source.name }}</span>
 </div>
@@ -26,6 +26,10 @@
 {% endblock %}
 
 {% block content %}
+
+{% if error == 'no_active_keys' %}
+<div class="banner danger">Нет активных ключей YouTube API. Добавьте ключ на странице «API ключи», чтобы обработать видео заново.</div>
+{% endif %}
 
 <div class="grid grid-4">
   <div class="card stat-card">
@@ -50,7 +54,7 @@
     {% endif %}
   </div>
   <div class="card stat-card">
-    <span class="stat-label">Комментариев извлечено</span>
+    <span class="stat-label">Собрано комментариев</span>
     <div class="stat-value" style="font-size:20px">{{ item.document_count | format_number }}</div>
   </div>
   <div class="card stat-card">
@@ -61,16 +65,16 @@
 
 <div class="card mt-6">
   <div class="card-header">
-    <div class="card-title">Метаданные источника</div>
+    <div class="card-title">Сведения о видео</div>
   </div>
   <div class="card-pad">
     <div class="grid grid-3">
       <div>
-        <div class="stat-label" style="margin-bottom:6px">external_id (YouTube)</div>
+        <div class="stat-label" style="margin-bottom:6px">ID на YouTube</div>
         <div class="cell-mono">{{ item.source.url.split('v=')[-1] }}</div>
       </div>
       <div>
-        <div class="stat-label" style="margin-bottom:6px">URL</div>
+        <div class="stat-label" style="margin-bottom:6px">Ссылка</div>
         <div class="cell-mono">{{ item.source.url }}</div>
       </div>
       <div>
@@ -84,10 +88,10 @@
 <div class="card mt-6">
   <div class="card-header">
     <div>
-      <div class="card-title">Извлечённые комментарии</div>
+      <div class="card-title">Комментарии</div>
       <div class="card-title-sub">{{ total | format_number }} комментари{{ 'й' if total == 1 else 'я' if total % 10 in [2,3,4] and total % 100 not in [12,13,14] else 'ев' }}</div>
     </div>
-    <a href="/comments" class="btn btn-ghost btn-sm">Открыть в общем каталоге</a>
+    <a href="/comments" class="btn btn-ghost btn-sm">Смотреть все комментарии</a>
   </div>
 
   <form class="filters-bar" method="get" action="/videos/{{ item.source.id }}">
@@ -113,8 +117,8 @@
     </div>
     {% else %}
     <div class="empty-state">
-      <div class="empty-state-title">Комментарии ещё не извлечены</div>
-      Нажмите «Переобработать», чтобы запустить извлечение
+      <div class="empty-state-title">Комментарии ещё не собраны</div>
+      Нажмите «Переобработать», чтобы собрать их
     </div>
     {% endfor %}
   </div>

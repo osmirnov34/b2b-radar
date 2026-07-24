@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Критерии качества{% endblock %}
-{% block page_title %}Критерии качества{% endblock %}
-{% block page_subtitle %}Пороги, по которым видео и комментарии отбираются при сборе данных{% endblock %}
+{% block title %}Правила отбора{% endblock %}
+{% block page_title %}Правила отбора{% endblock %}
+{% block page_subtitle %}Условия, по которым видео и комментарии попадают в базу при сборе{% endblock %}
 
 {% macro number_field(name, label, value, hint, unit="", placeholder="0") %}
 <div class="field">
@@ -28,7 +28,7 @@
 
   <div class="callout">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.5" r="0.6" fill="currentColor"/></svg>
-    <div>Порог <b>0</b> отключает проверку. Условия работают по правилу «не меньше» (для возраста — «не старше») и применяются при добавлении источника и повторной обработке. Уже сохранённые данные не затрагиваются.</div>
+    <div>Значение <b>0</b> отключает условие. Каждое условие работает по правилу «не меньше» (для возраста — «не старше») и применяется при сборе новых видео и повторной обработке. Уже собранные данные остаются как есть.</div>
   </div>
 
   <div class="card">
@@ -39,22 +39,22 @@
         </div>
         <div>
           <div class="card-title">Видео</div>
-          <div class="card-title-sub">Оставлять только ролики с достаточной аудиторией и вовлечённостью</div>
+          <div class="card-title-sub">Брать только ролики с заметной аудиторией и живым обсуждением</div>
         </div>
       </div>
     </div>
     <div class="card-pad">
       <div class="form-grid">
         {{ number_field("source_min_views", "Минимум просмотров", settings.source_min_views,
-           "Отсекает малопросматриваемые ролики", placeholder="напр. 5000") }}
+           "Отсеивает ролики, которые почти никто не смотрел", placeholder="напр. 5000") }}
         {{ number_field("source_min_likes", "Минимум лайков", settings.source_min_likes,
-           "Сигнал того, что контент полезен зрителям", placeholder="напр. 100") }}
+           "Показывает, что ролик оказался полезен зрителям", placeholder="напр. 100") }}
         {{ number_field("source_min_comments", "Минимум комментариев", settings.source_min_comments,
-           "Обсуждаемость = больше идей в комментариях", placeholder="напр. 20") }}
+           "Чем активнее обсуждение, тем больше идей в комментариях", placeholder="напр. 20") }}
         {{ number_field("source_min_duration_seconds", "Минимальная длительность", settings.source_min_duration_seconds,
-           "Отсекает Shorts и короткие обрывки", unit="сек", placeholder="напр. 60") }}
+           "Отсеивает Shorts и короткие ролики без содержания", unit="сек", placeholder="напр. 60") }}
         {{ number_field("source_max_age_days", "Максимальный возраст", settings.source_max_age_days,
-           "Оставляет только актуальные ролики", unit="дней", placeholder="напр. 365") }}
+           "Оставляет только свежие ролики", unit="дней", placeholder="напр. 365") }}
       </div>
     </div>
   </div>
@@ -67,16 +67,16 @@
         </div>
         <div>
           <div class="card-title">Комментарии</div>
-          <div class="card-title-sub">Оставлять только содержательные комментарии, отсеивая спам и односложные реакции</div>
+          <div class="card-title-sub">Брать только содержательные комментарии, отсеивая спам и односложные реакции</div>
         </div>
       </div>
     </div>
     <div class="card-pad">
       <div class="form-grid">
         {{ number_field("document_min_likes", "Минимум лайков", settings.document_min_likes,
-           "Социальное подтверждение полезности", placeholder="напр. 3") }}
+           "Другие зрители отметили комментарий как полезный", placeholder="напр. 3") }}
         {{ number_field("document_min_length", "Минимальная длина", settings.document_min_length,
-           "Отсекает «круто!» и эмодзи-спам", unit="симв.", placeholder="напр. 40") }}
+           "Отсеивает «круто!» и эмодзи вместо мысли", unit="симв.", placeholder="напр. 40") }}
         {{ number_field("document_min_replies", "Минимум ответов", settings.document_min_replies,
            "Комментарий вызвал обсуждение в ветке", placeholder="напр. 1") }}
       </div>
@@ -85,7 +85,7 @@
 
   <div class="form-actions">
     <span class="hint">Изменения вступят в силу при следующем сборе</span>
-    <button type="submit" class="btn btn-primary">Сохранить критерии</button>
+    <button type="submit" class="btn btn-primary">Сохранить</button>
   </div>
 
 </form>

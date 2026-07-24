@@ -1,16 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Источники и видео{% endblock %}
-{% block page_title %}Источники и видео{% endblock %}
-{% block page_subtitle %}Все YouTube-видео, найденные пайплайном{% endblock %}
+{% block title %}Видео{% endblock %}
+{% block page_title %}Видео{% endblock %}
+{% block page_subtitle %}Все видео с YouTube, собранные по вашим запросам{% endblock %}
 
 {% block topbar_actions %}
 <button class="btn btn-primary" onclick="openModal('modal-add-source')">
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
-  Добавить источник
+  Собрать видео
 </button>
 {% endblock %}
 
 {% block content %}
+
+{% if error == 'no_active_keys' %}
+<div class="banner danger">Нет активных ключей YouTube API. Добавьте ключ на странице «API ключи», чтобы запустить сбор.</div>
+{% endif %}
 
 <div class="card">
   <form class="filters-bar" method="get" action="/videos">
@@ -68,7 +72,7 @@
           <td class="text-tertiary">{{ item.source.extracted_at | humanize_ru }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">Ничего не найдено</div>Попробуйте изменить фильтры или добавьте новый источник</div></td></tr>
+        <tr><td colspan="6"><div class="empty-state"><div class="empty-state-title">Ничего не найдено</div>Измените условия поиска или соберите новые видео</div></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -90,7 +94,7 @@
   <div class="modal">
     <form method="post" action="/videos">
       <div class="modal-header">
-        Добавить источник
+        Собрать видео
         <button type="button" class="icon-btn" onclick="closeModal('modal-add-source')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
@@ -98,14 +102,14 @@
       <div class="modal-body">
         <div class="field">
           <label>Поисковый запрос</label>
-          <input type="text" name="query" required placeholder="например, b2b идеи для бизнеса">
+          <input type="text" name="query" required placeholder="например, идеи для B2B-бизнеса">
         </div>
         <div class="field">
-          <label>Лимит источников</label>
+          <label>Сколько видео собрать</label>
           <input type="number" name="source_limit" value="50" min="1" max="500">
         </div>
         <div class="field">
-          <label>Лимит документов на источник</label>
+          <label>Сколько комментариев с каждого видео</label>
           <input type="number" name="document_limit" value="100" min="1" max="1000">
         </div>
       </div>

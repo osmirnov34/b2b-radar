@@ -27,13 +27,13 @@
     <div class="nav-group-label">Обзор</div>
     <a class="nav-item {{ 'active' if request.url.path == '/' }}" href="/">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-      Дашборд
+      Обзор
     </a>
 
     <div class="nav-group-label">Данные</div>
     <a class="nav-item {{ 'active' if request.url.path.startswith('/videos') }}" href="/videos">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 9.5 22 6v12l-5-3.5"/></svg>
-      Источники и видео
+      Видео
       <span class="count">{{ nav_sources_count }}</span>
     </a>
     <a class="nav-item {{ 'active' if request.url.path.startswith('/comments') }}" href="/comments">
@@ -49,7 +49,7 @@
     </a>
     <a class="nav-item {{ 'active' if request.url.path.startswith('/settings') }}" href="/settings">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
-      Критерии качества
+      Правила отбора
     </a>
 
     <div class="sidebar-footer">

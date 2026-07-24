@@ -2,7 +2,7 @@
 {% import "_replies.html" as replies_macro %}
 {% block title %}Комментарии{% endblock %}
 {% block page_title %}Комментарии{% endblock %}
-{% block page_subtitle %}Единый каталог извлечённых комментариев по всем источникам{% endblock %}
+{% block page_subtitle %}Все комментарии, собранные со всех видео{% endblock %}
 
 {% block topbar_actions %}
 <a class="btn btn-ghost" href="/comments/export.jsonl?q={{ q | urlencode }}&amp;period={{ period }}">
@@ -23,7 +23,7 @@
     <div class="stat-value" style="font-size:20px">{{ last_24h | format_number }}</div>
   </div>
   <div class="card stat-card" style="padding:14px 18px">
-    <span class="stat-label">Источников с комментариями</span>
+    <span class="stat-label">Видео с комментариями</span>
     <div class="stat-value" style="font-size:20px">{{ sources_with_comments | format_number }}</div>
   </div>
 </div>
