@@ -8,13 +8,11 @@ from src.domain.source import IngestStatus, Source
 from src.infrastructure.api.youtube import YoutubeClient
 from src.infrastructure.db.repositories import (
     DocumentRepository,
-    FilterSettingsRepository,
     SourceRepository,
     YoutubeApiKeyRepository,
 )
 from src.infrastructure.db.session import get_session
 from src.infrastructure.extractor.language import is_probably_russian
-from src.infrastructure.extractor.quality import YoutubeQualityFilter
 from src.infrastructure.extractor.youtube import YoutubeExtractor
 
 logger = logging.getLogger(__name__)
@@ -26,7 +24,6 @@ class _IngestContext:
 
     session: AsyncSession
     extractor: YoutubeExtractor
-    quality_filter: YoutubeQualityFilter
     source_repo: SourceRepository
     document_repo: DocumentRepository
 
@@ -53,9 +50,8 @@ async def _save_sources(ctx: _IngestContext, query: str, limit: int) -> list[Sou
 async def _extract_documents_for_source(ctx: _IngestContext, source: Source, limit: int) -> int:
     # extract_documents performs blocking network I/O; run it off the event loop.
     extracted = await asyncio.to_thread(ctx.extractor.extract_documents, source, limit)
-    filtered = [document for document in extracted if ctx.quality_filter.accepts_comment(document)]
     # YouTube can return the same (often pinned) comment twice across pages of the same batch.
-    documents = list({document.external_id: document for document in filtered}.values())
+    documents = list({document.external_id: document for document in extracted}.values())
     if not documents:
         return 0
 
@@ -116,7 +112,6 @@ async def run(query: str, source_limit: int, document_limit: int) -> None:
         ctx = _IngestContext(
             session=session,
             extractor=extractor,
-            quality_filter=YoutubeQualityFilter(await FilterSettingsRepository(session).get()),
             source_repo=SourceRepository(session),
             document_repo=DocumentRepository(session),
         )
@@ -144,7 +139,6 @@ async def reprocess_source(source_id: int, document_limit: int) -> None:
         ctx = _IngestContext(
             session=session,
             extractor=extractor,
-            quality_filter=YoutubeQualityFilter(await FilterSettingsRepository(session).get()),
             source_repo=SourceRepository(session),
             document_repo=DocumentRepository(session),
         )

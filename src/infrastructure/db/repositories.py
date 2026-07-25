@@ -8,19 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.api_key import ApiKey
 from src.domain.document import Document
-from src.domain.filter_settings import FilterSettings
 from src.domain.source import IngestStatus, Source, SourceType
 from src.infrastructure.db.models import (
     DocumentModel,
-    FilterSettingsModel,
     SourceModel,
     YoutubeApiKeyModel,
 )
 
 SourceStatus = Literal["all", "processed", "pending"]
-
-# The filter_settings table only ever holds a single configuration row.
-FILTER_SETTINGS_ROW_ID = 1
 
 
 @dataclass
@@ -326,31 +321,3 @@ class YoutubeApiKeyRepository:
             is_active=model.is_active,
             created_at=model.created_at,
         )
-
-
-class FilterSettingsRepository:
-    """Reads and writes the single-row ingestion quality settings."""
-
-    _FIELDS = (
-        "document_min_likes",
-        "document_min_length",
-        "document_min_replies",
-    )
-
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def get(self) -> FilterSettings:
-        model = await self.session.get(FilterSettingsModel, FILTER_SETTINGS_ROW_ID)
-        if model is None:
-            return FilterSettings()
-        return FilterSettings(**{field: getattr(model, field) for field in self._FIELDS})
-
-    async def update(self, settings: FilterSettings) -> None:
-        model = await self.session.get(FilterSettingsModel, FILTER_SETTINGS_ROW_ID)
-        if model is None:
-            model = FilterSettingsModel(id=FILTER_SETTINGS_ROW_ID)
-            self.session.add(model)
-        for field in self._FIELDS:
-            setattr(model, field, getattr(settings, field))
-        await self.session.flush()

@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from src.web.routers import api_keys, dashboard, documents, settings, sources
+from src.web.routers import api_keys, dashboard, documents, sources
 
 STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "static"
 
@@ -17,7 +17,6 @@ def create_app() -> FastAPI:
     app.include_router(sources.router)
     app.include_router(documents.router)
     app.include_router(api_keys.router)
-    app.include_router(settings.router)
 
     return app
 
