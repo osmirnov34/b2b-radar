@@ -1,25 +1,43 @@
-import py3langid as langid
+from functools import lru_cache
 
-# py3langid confuses the Cyrillic-script languages with each other (a Russian title routinely
-# classifies as ``bg``/``uk``), so the gate keeps the whole Cyrillic family rather than only ``ru``.
-# The goal here is coarse: drop clearly foreign videos (English music/reviews, emoji spam) before
-# spending comment-fetch quota on them, NOT to tell Russian from Ukrainian.
-_CYRILLIC_LANGS = frozenset({"ru", "uk", "bg", "mk", "sr", "be", "kk", "ky", "mn"})
+from lingua import Language, LanguageDetector, LanguageDetectorBuilder
+
+# lingua only returns a language from this set, so the Cyrillic neighbours must be here to be
+# recognised (and dropped) instead of collapsing onto Russian, and the Latin languages give
+# foreign titles somewhere to land. Other scripts (Han, Arabic, ...) yield no match -> not Russian.
+_DETECTOR_LANGS = (
+    Language.RUSSIAN,
+    Language.UKRAINIAN,
+    Language.BULGARIAN,
+    Language.BELARUSIAN,
+    Language.SERBIAN,
+    Language.KAZAKH,
+    Language.ENGLISH,
+    Language.GERMAN,
+    Language.FRENCH,
+    Language.SPANISH,
+    Language.TURKISH,
+    Language.POLISH,
+)
 
 # Below this many characters there is too little signal to trust a verdict, so we keep the source
 # rather than risk dropping a real Russian video on a noisy few-word (often brand-only) title.
 _MIN_CHARS_FOR_DETECTION = 20
 
 
-def is_probably_russian(*parts: str | None, min_chars: int = _MIN_CHARS_FOR_DETECTION) -> bool:
-    """Best-effort language gate over the concatenated text parts (e.g. video title + description).
+@lru_cache(maxsize=1)
+def _detector() -> LanguageDetector:
+    """Build the shared detector once; lingua loads its FST models lazily on first use."""
+    return LanguageDetectorBuilder.from_languages(*_DETECTOR_LANGS).build()
 
-    Conservative by design: returns ``True`` (keep) unless the combined text is long enough to
-    judge AND classifies as a non-Cyrillic language. Callers pass title and description together so
-    a Cyrillic description can rescue a brand-heavy Latin title.
+
+def is_probably_russian(*parts: str | None, min_chars: int = _MIN_CHARS_FOR_DETECTION) -> bool:
+    """Keep a source only when the combined text (e.g. video title + description) is Russian.
+
+    Ukrainian, other Cyrillic languages and foreign-script text are dropped. Text shorter than
+    ``min_chars`` is kept: too little signal to risk dropping a real Russian source.
     """
     text = " ".join(part.strip() for part in parts if part).strip()
     if len(text) < min_chars:
         return True
-    lang, _score = langid.classify(text)
-    return lang in _CYRILLIC_LANGS
+    return _detector().detect_language_of(text) == Language.RUSSIAN
