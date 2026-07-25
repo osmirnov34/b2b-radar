@@ -13,6 +13,7 @@ from src.infrastructure.db.repositories import (
     YoutubeApiKeyRepository,
 )
 from src.infrastructure.db.session import get_session
+from src.infrastructure.extractor.language import is_probably_russian
 from src.infrastructure.extractor.quality import YoutubeQualityFilter
 from src.infrastructure.extractor.youtube import YoutubeExtractor
 
@@ -33,8 +34,14 @@ class _IngestContext:
 async def _save_sources(ctx: _IngestContext, query: str, limit: int) -> list[Source]:
     # extract_sources performs blocking network I/O; run it off the event loop.
     extracted = await asyncio.to_thread(ctx.extractor.extract_sources, query, limit)
-    sources = [source for source in extracted if ctx.quality_filter.accepts_video(source)]
-    logger.info("Video quality filter kept %d/%d source(s)", len(sources), len(extracted))
+    # Language gate runs before comment fetching so we never spend quota on clearly foreign videos.
+    sources = [
+        source
+        for source in extracted
+        if ctx.quality_filter.accepts_video(source)
+        and is_probably_russian(source.name, source.metadata.get("description"))
+    ]
+    logger.info("Video quality + language filter kept %d/%d source(s)", len(sources), len(extracted))
     saved_sources = []
 
     for source in sources:
