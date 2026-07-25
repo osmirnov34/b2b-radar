@@ -332,11 +332,6 @@ class FilterSettingsRepository:
     """Reads and writes the single-row ingestion quality settings."""
 
     _FIELDS = (
-        "source_min_views",
-        "source_min_likes",
-        "source_min_comments",
-        "source_min_duration_seconds",
-        "source_max_age_days",
         "document_min_likes",
         "document_min_length",
         "document_min_replies",

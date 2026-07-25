@@ -30,21 +30,11 @@ async def show_settings(request: Request, session: SessionDep) -> HTMLResponse:
 async def save_settings(
     session: SessionDep,
     *,
-    source_min_views: NonNegative = 0,
-    source_min_likes: NonNegative = 0,
-    source_min_comments: NonNegative = 0,
-    source_min_duration_seconds: NonNegative = 0,
-    source_max_age_days: NonNegative = 0,
     document_min_likes: NonNegative = 0,
     document_min_length: NonNegative = 0,
     document_min_replies: NonNegative = 0,
 ) -> RedirectResponse:
     settings = FilterSettings(
-        source_min_views=source_min_views,
-        source_min_likes=source_min_likes,
-        source_min_comments=source_min_comments,
-        source_min_duration_seconds=source_min_duration_seconds,
-        source_max_age_days=source_max_age_days,
         document_min_likes=document_min_likes,
         document_min_length=document_min_length,
         document_min_replies=document_min_replies,

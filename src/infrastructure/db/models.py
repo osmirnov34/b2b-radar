@@ -47,12 +47,6 @@ class FilterSettingsModel(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    source_min_views: Mapped[int] = mapped_column(default=0, server_default="0")
-    source_min_likes: Mapped[int] = mapped_column(default=0, server_default="0")
-    source_min_comments: Mapped[int] = mapped_column(default=0, server_default="0")
-    source_min_duration_seconds: Mapped[int] = mapped_column(default=0, server_default="0")
-    source_max_age_days: Mapped[int] = mapped_column(default=0, server_default="0")
-
     document_min_likes: Mapped[int] = mapped_column(default=0, server_default="0")
     document_min_length: Mapped[int] = mapped_column(default=0, server_default="0")
     document_min_replies: Mapped[int] = mapped_column(default=0, server_default="0")
