@@ -13,6 +13,7 @@ from src.infrastructure.db.repositories import (
 )
 from src.infrastructure.db.session import get_session
 from src.infrastructure.extractor.language import is_probably_russian
+from src.infrastructure.extractor.noise import is_noise
 from src.infrastructure.extractor.youtube import YoutubeExtractor
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,12 @@ async def _extract_documents_for_source(ctx: _IngestContext, source: Source, lim
     russian = [document for document in extracted if is_probably_russian(document.text)]
     if len(russian) != len(extracted):
         logger.info("Language filter kept %d/%d comment(s) for source_id=%s", len(russian), len(extracted), source.id)
+    # Noise gate: drop emoji walls and glued gibberish the language gate lets through.
+    clean = [document for document in russian if not is_noise(document.text)]
+    if len(clean) != len(russian):
+        logger.info("Noise filter kept %d/%d comment(s) for source_id=%s", len(clean), len(russian), source.id)
     # YouTube can return the same (often pinned) comment twice across pages of the same batch.
-    documents = list({document.external_id: document for document in russian}.values())
+    documents = list({document.external_id: document for document in clean}.values())
     if not documents:
         return 0
 
