@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -38,6 +38,38 @@ class SourceModel(Base):
     ingest_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending", index=True)
     ingest_error: Mapped[str | None] = mapped_column(default=None)
     extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class AnalysisRunModel(Base):
+    """A single uploaded clustering result (one clusters.jsonl), shown in the analysis history."""
+
+    __tablename__ = "analysis_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    label: Mapped[str] = mapped_column(String(255))
+    model: Mapped[str | None] = mapped_column(String(255), default=None)
+    near_dup_threshold: Mapped[float | None] = mapped_column(Float, default=None)
+    min_topic_size: Mapped[int | None] = mapped_column(Integer, default=None)
+    n_clusters: Mapped[int] = mapped_column(Integer, default=0)
+    n_comments: Mapped[int] = mapped_column(Integer, default=0)
+    n_authors: Mapped[int] = mapped_column(Integer, default=0)
+    n_channels: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class ClusterModel(Base):
+    """One discovered cluster within a run: keywords + its comments (with per-comment provenance)."""
+
+    __tablename__ = "clusters"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True)
+    topic_id: Mapped[int] = mapped_column(Integer)
+    n_comments: Mapped[int] = mapped_column(Integer, default=0)
+    n_authors: Mapped[int] = mapped_column(Integer, default=0)
+    n_channels: Mapped[int] = mapped_column(Integer, default=0)
+    keywords: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    comments: Mapped[list[Any]] = mapped_column(JSONB, default=list)
 
 
 class YoutubeApiKeyModel(Base):

@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,8 @@ from src.domain.api_key import ApiKey
 from src.domain.document import Document
 from src.domain.source import IngestStatus, Source, SourceType
 from src.infrastructure.db.models import (
+    AnalysisRunModel,
+    ClusterModel,
     DocumentModel,
     SourceModel,
     YoutubeApiKeyModel,
@@ -275,6 +277,112 @@ class DocumentRepository:
             metadata=model.metadata_data,
             extracted_at=model.extracted_at,
         )
+
+
+@dataclass
+class ClusterSummary:
+    """A cluster's card-level fields (no comments payload), for the run overview grid."""
+
+    id: int
+    topic_id: int
+    n_comments: int
+    n_authors: int
+    n_channels: int
+    keywords: list[str]
+
+
+class AnalysisRepository:
+    """Persists and retrieves uploaded clustering results (runs -> clusters -> comments)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create_run(self, label: str, clusters: list[dict[str, Any]]) -> int:
+        """Persist a parsed clusters.jsonl as one run + its clusters. Returns the new run id.
+
+        Run-level distinct authors/channels are counted across all comments (overlap-free),
+        not summed from per-cluster counts (an author can recur across clusters).
+        """
+        authors: set[str] = set()
+        channels: set[str] = set()
+        total_comments = 0
+        for c in clusters:
+            for comment in c.get("comments", []):
+                authors.add(comment.get("author", ""))
+                channels.add(comment.get("channel", ""))
+            total_comments += int(c.get("n_comments", len(c.get("comments", []))))
+
+        run = AnalysisRunModel(
+            label=label,
+            n_clusters=len(clusters),
+            n_comments=total_comments,
+            n_authors=len(authors),
+            n_channels=len(channels),
+        )
+        self.session.add(run)
+        await self.session.flush()
+
+        self.session.add_all(
+            [
+                ClusterModel(
+                    run_id=run.id,
+                    topic_id=int(c.get("topic_id", -1)),
+                    n_comments=int(c.get("n_comments", len(c.get("comments", [])))),
+                    n_authors=int(c.get("n_authors", 0)),
+                    n_channels=int(c.get("n_channels", 0)),
+                    keywords=c.get("keywords", []),
+                    comments=c.get("comments", []),
+                )
+                for c in clusters
+            ],
+        )
+        await self.session.flush()
+        return run.id
+
+    async def list_runs(self) -> list[AnalysisRunModel]:
+        rows = await self.session.scalars(select(AnalysisRunModel).order_by(AnalysisRunModel.created_at.desc()))
+        return list(rows)
+
+    async def get_run(self, run_id: int) -> AnalysisRunModel | None:
+        return await self.session.get(AnalysisRunModel, run_id)
+
+    async def list_cluster_summaries(self, run_id: int) -> list[ClusterSummary]:
+        """Cluster cards for a run, largest first — selects everything except the heavy comments blob."""
+        rows = await self.session.execute(
+            select(
+                ClusterModel.id,
+                ClusterModel.topic_id,
+                ClusterModel.n_comments,
+                ClusterModel.n_authors,
+                ClusterModel.n_channels,
+                ClusterModel.keywords,
+            )
+            .where(ClusterModel.run_id == run_id)
+            .order_by(ClusterModel.n_comments.desc()),
+        )
+        return [
+            ClusterSummary(
+                id=r.id,
+                topic_id=r.topic_id,
+                n_comments=r.n_comments,
+                n_authors=r.n_authors,
+                n_channels=r.n_channels,
+                keywords=r.keywords or [],
+            )
+            for r in rows
+        ]
+
+    async def get_cluster(self, cluster_id: int) -> ClusterModel | None:
+        return await self.session.get(ClusterModel, cluster_id)
+
+    async def delete_run(self, run_id: int) -> None:
+        run = await self.session.get(AnalysisRunModel, run_id)
+        if run is not None:
+            await self.session.delete(run)  # clusters cascade via FK ON DELETE CASCADE
+            await self.session.flush()
+
+    async def count_all(self) -> int:
+        return await self.session.scalar(select(func.count()).select_from(AnalysisRunModel)) or 0
 
 
 class YoutubeApiKeyRepository:
