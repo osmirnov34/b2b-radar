@@ -25,6 +25,11 @@ dev = [
     "ruff",
     "mypy",
 ]
+# Offline pain-mining analysis (embeddings + topic clustering). Heavy ML stack
+analysis = [
+    "bertopic>=0.16",
+    "sentence-transformers>=3.0",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -38,6 +43,7 @@ exclude = [
     "build",
     "dist",
     "migrations",
+    "scripts",
 ]
 line-length = 120
 
@@ -68,6 +74,7 @@ exclude = [
     '.venv',
     'tests',
     'migrations',
+    'scripts',
 ]
 
 warn_unused_configs = true
