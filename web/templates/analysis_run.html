@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ run.label }}{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="/analysis">Кластеры</a>
+  <span class="sep">/</span>
+  <span class="current">{{ run.label }}</span>
+</div>
+{% endblock %}
+{% block page_title %}{{ run.label }}{% endblock %}
+{% block page_subtitle_wrap %}<div class="page-subtitle">Загружен {{ run.created_at | humanize_ru }}{% if run.model %} · {{ run.model }}{% endif %}</div>{% endblock %}
+
+{% block topbar_actions %}
+<form method="post" action="/analysis/{{ run.id }}/delete" onsubmit="return confirm('Удалить этот прогон со всеми кластерами?')">
+  <button type="submit" class="btn btn-ghost">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
+    Удалить
+  </button>
+</form>
+{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-4">
+  <div class="card stat-card">
+    <span class="stat-label">Кластеров</span>
+    <div class="stat-value">{{ run.n_clusters | format_number }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Комментариев</span>
+    <div class="stat-value">{{ run.n_comments | format_number }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Уникальных авторов</span>
+    <div class="stat-value">{{ run.n_authors | format_number }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Каналов</span>
+    <div class="stat-value">{{ run.n_channels | format_number }}</div>
+  </div>
+</div>
+
+<div class="card-title mt-6" style="margin-bottom:12px">Найденные кластеры</div>
+
+{% for c in clusters %}
+<a class="card clickable" href="/analysis/{{ run.id }}/clusters/{{ c.id }}"
+   style="display:block;text-decoration:none;color:inherit;margin-bottom:12px">
+  <div class="card-pad">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:10px">
+      <span style="font-size:13px;font-weight:600;color:var(--text-tertiary);font-variant-numeric:tabular-nums">#{{ c.topic_id }}</span>
+      <div style="margin-left:auto;display:flex;gap:16px;font-size:13px;color:var(--text-secondary)">
+        <span><b style="color:var(--text);font-variant-numeric:tabular-nums">{{ c.n_comments | format_number }}</b> комм.</span>
+        <span><b style="color:var(--text);font-variant-numeric:tabular-nums">{{ c.n_authors | format_number }}</b> авт.</span>
+        <span><b style="color:var(--text);font-variant-numeric:tabular-nums">{{ c.n_channels | format_number }}</b> кан.</span>
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+      {% for kw in c.keywords[:10] %}<span class="chip">{{ kw }}</span>{% endfor %}
+    </div>
+    <div style="height:6px;background:var(--surface-sunken);border-radius:4px;overflow:hidden">
+      <div style="height:100%;width:{{ [2, (c.n_comments / max_comments * 100) | round(0, 'ceil')] | max }}%;background:var(--accent);border-radius:4px"></div>
+    </div>
+  </div>
+</a>
+{% else %}
+<div class="card"><div class="empty-state"><div class="empty-state-title">В этом прогоне нет кластеров</div></div></div>
+{% endfor %}
+
+{% endblock %}

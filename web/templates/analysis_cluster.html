@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Кластер #{{ cluster.topic_id }}{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="/analysis">Кластеры</a>
+  <span class="sep">/</span>
+  <a href="/analysis/{{ run.id }}">{{ run.label }}</a>
+  <span class="sep">/</span>
+  <span class="current">Кластер #{{ cluster.topic_id }}</span>
+</div>
+{% endblock %}
+{% block page_title %}Кластер #{{ cluster.topic_id }}{% endblock %}
+{% block page_subtitle_wrap %}{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-3">
+  <div class="card stat-card">
+    <span class="stat-label">Комментариев</span>
+    <div class="stat-value">{{ cluster.n_comments | format_number }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Уникальных авторов</span>
+    <div class="stat-value">{{ cluster.n_authors | format_number }}</div>
+  </div>
+  <div class="card stat-card">
+    <span class="stat-label">Каналов</span>
+    <div class="stat-value">{{ cluster.n_channels | format_number }}</div>
+  </div>
+</div>
+
+<div class="card mt-6">
+  <div class="card-header">
+    <div class="card-title">Ключевые слова</div>
+  </div>
+  <div class="card-pad">
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      {% for kw in cluster.keywords %}<span class="chip">{{ kw }}</span>{% else %}<span class="text-tertiary">—</span>{% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card mt-6">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Комментарии</div>
+      <div class="card-title-sub">{{ total | format_number }} {{ 'совпадение' if q else 'всего' }}</div>
+    </div>
+  </div>
+
+  <form class="filters-bar" method="get" action="/analysis/{{ run.id }}/clusters/{{ cluster.id }}">
+    <div class="search-box" style="max-width:280px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" name="q" value="{{ q }}" placeholder="Поиск по тексту комментариев">
+    </div>
+    <button type="submit" class="btn btn-ghost btn-sm" style="margin-left:auto">Найти</button>
+  </form>
+
+  <div>
+    {% for c in comments %}
+    <div class="comment">
+      <div class="comment-avatar">{{ (c.get('author') or '?')[:2].upper() }}</div>
+      <div class="comment-body">
+        <div class="comment-head">
+          <span class="comment-author">{{ c.get('author') or 'Аноним' }}</span>
+        </div>
+        <div class="comment-text">{{ c.get('text') }}</div>
+        <div class="text-tertiary" style="font-size:12px;margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center">
+          {% if c.get('channel') %}<span>{{ c.get('channel') }}</span>{% endif %}
+          {% if c.get('video_url') %}
+          <a href="{{ c.get('video_url') }}" target="_blank" rel="noopener">▶ {{ c.get('video_title') or c.get('video_id') or 'видео' }}</a>
+          {% elif c.get('video_title') %}<span>▶ {{ c.get('video_title') }}</span>{% endif %}
+          {% if c.get('query') %}<span class="chip" style="font-size:11px;padding:1px 8px">{{ c.get('query') }}</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-title">{{ 'Ничего не найдено' if q else 'Нет комментариев' }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="pagination">
+    <div class="pagination-info">Показано {{ ((page - 1) * page_size + 1) if total > 0 else 0 }}–{{ min(page * page_size, total) }} из {{ total | format_number }}</div>
+    <div class="pagination-controls">
+      <a class="btn btn-ghost btn-sm" href="/analysis/{{ run.id }}/clusters/{{ cluster.id }}?q={{ q | urlencode }}&amp;page={{ page - 1 }}" {% if page <= 1 %}style="pointer-events:none;opacity:0.4"{% endif %}>Назад</a>
+      <a class="btn btn-ghost btn-sm" href="/analysis/{{ run.id }}/clusters/{{ cluster.id }}?q={{ q | urlencode }}&amp;page={{ page + 1 }}" {% if page * page_size >= total %}style="pointer-events:none;opacity:0.4"{% endif %}>Вперёд</a>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

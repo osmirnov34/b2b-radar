@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Кластеры{% endblock %}
+{% block page_title %}Анализ кластеров{% endblock %}
+{% block page_subtitle %}История загруженных прогонов кластеризации — результаты <code>mine_topics.py</code>{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openModal('modal-upload-run')">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15V3M7 8l5-5 5 5M5 21h14"/></svg>
+  Загрузить clusters.jsonl
+</button>
+{% endblock %}
+
+{% block content %}
+
+{% if error == 'empty_file' %}
+<div class="banner danger">В файле не найдено кластеров. Ожидается <code>clusters.jsonl</code> (по одному кластеру на строку).</div>
+{% endif %}
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Прогон</th>
+          <th class="num">Кластеров</th>
+          <th class="num">Комментариев</th>
+          <th class="num">Авторов</th>
+          <th class="num">Каналов</th>
+          <th>Загружен</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr class="clickable" onclick="location.href='/analysis/{{ run.id }}'">
+          <td>
+            <div class="row-flex">
+              <div class="thumb">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="7" r="2"/><circle cx="17" cy="6" r="2"/><circle cx="8" cy="17" r="2"/><circle cx="18" cy="16" r="2"/></svg>
+              </div>
+              <div>
+                <div class="cell-title">{{ run.label }}</div>
+                {% if run.model %}<div class="cell-sub">{{ run.model }}</div>{% endif %}
+              </div>
+            </div>
+          </td>
+          <td class="num">{{ run.n_clusters | format_number }}</td>
+          <td class="num">{{ run.n_comments | format_number }}</td>
+          <td class="num">{{ run.n_authors | format_number }}</td>
+          <td class="num">{{ run.n_channels | format_number }}</td>
+          <td class="text-tertiary">{{ run.created_at | humanize_ru }}</td>
+          <td>
+            <form method="post" action="/analysis/{{ run.id }}/delete" onclick="event.stopPropagation()"
+                  onsubmit="return confirm('Удалить прогон «{{ run.label }}» со всеми кластерами?')">
+              <button type="submit" class="icon-btn" title="Удалить прогон">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><div class="empty-state"><div class="empty-state-title">Пока нет загруженных прогонов</div>Запустите <code>mine_topics.py</code> и загрузите получившийся <code>clusters.jsonl</code></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block modals %}
+<div class="modal-backdrop hidden" id="modal-upload-run">
+  <div class="modal">
+    <form method="post" action="/analysis" enctype="multipart/form-data">
+      <div class="modal-header">
+        Загрузить результат кластеризации
+        <button type="button" class="icon-btn" onclick="closeModal('modal-upload-run')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Файл <span class="text-tertiary">(clusters.jsonl)</span></label>
+          <input type="file" name="file" accept=".jsonl,.json,application/json" required>
+        </div>
+        <div class="field">
+          <label>Название прогона <span class="text-tertiary">(необязательно)</span></label>
+          <input type="text" name="label" placeholder="напр. натяжные потолки, e5-large, 130k">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" onclick="closeModal('modal-upload-run')">Отмена</button>
+        <button type="submit" class="btn btn-primary">Загрузить</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

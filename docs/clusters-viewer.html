@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="ru" data-theme-default>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pain Clusters — Viewer</title>
+<style>
+  /* Palette: dataviz reference instance (light + dark, both selected). */
+  :root {
+    --page:        #f9f9f7;
+    --surface:     #fcfcfb;
+    --surface-2:   #f2f1ee;
+    --text:        #0b0b0b;
+    --text-2:      #52514e;
+    --muted:       #898781;
+    --border:      rgba(11,11,11,0.10);
+    --hairline:    #e1e0d9;
+    --accent:      #2a78d6;
+    --accent-weak: #cde2fb;
+    --mark:        #256abf;
+    --shadow:      0 1px 2px rgba(11,11,11,0.04), 0 6px 20px rgba(11,11,11,0.05);
+    --hi:          #fff3b0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page:#0d0d0d; --surface:#1a1a19; --surface-2:#222220; --text:#fff; --text-2:#c3c2b7;
+      --muted:#898781; --border:rgba(255,255,255,0.10); --hairline:#2c2c2a;
+      --accent:#3987e5; --accent-weak:#184f95; --mark:#3987e5;
+      --shadow:0 1px 2px rgba(0,0,0,0.4); --hi:#5a4a00;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page:#0d0d0d; --surface:#1a1a19; --surface-2:#222220; --text:#fff; --text-2:#c3c2b7;
+    --muted:#898781; --border:rgba(255,255,255,0.10); --hairline:#2c2c2a;
+    --accent:#3987e5; --accent-weak:#184f95; --mark:#3987e5;
+    --shadow:0 1px 2px rgba(0,0,0,0.4); --hi:#5a4a00;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Header ------------------------------------------------------------ */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--page) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--hairline);
+    padding: 14px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .btn {
+    font: inherit; font-size: 13px; font-weight: 500;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 12px; cursor: pointer; transition: background .15s;
+  }
+  .btn:hover { background: var(--surface-2); }
+  .btn-accent { background: var(--accent); color: #fff; border-color: transparent; }
+  .btn-accent:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+  #file { display: none; }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+
+  /* Drop zone --------------------------------------------------------- */
+  #drop {
+    border: 1.5px dashed var(--border); border-radius: 16px;
+    padding: 64px 24px; text-align: center; color: var(--text-2);
+    background: var(--surface); transition: border-color .15s, background .15s;
+  }
+  #drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  #drop h2 { margin: 0 0 6px; font-size: 18px; color: var(--text); }
+  #drop p { margin: 4px 0; font-size: 14px; }
+  #drop code { background: var(--surface-2); padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+
+  /* Stat tiles -------------------------------------------------------- */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .tile .label { color: var(--text-2); font-size: 12.5px; margin-bottom: 6px; }
+  .tile .value { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+  .tile .value small { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+
+  /* Controls ---------------------------------------------------------- */
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .search {
+    flex: 1; min-width: 220px; display: flex; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0 12px;
+  }
+  .search input { flex: 1; border: 0; background: none; color: var(--text); font: inherit; padding: 10px 0; outline: none; }
+  .search svg { color: var(--muted); flex: none; }
+  select.btn { padding-right: 8px; }
+  .count { color: var(--muted); font-size: 13px; white-space: nowrap; }
+
+  /* Cluster card ------------------------------------------------------ */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    margin-bottom: 12px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  .card-head { padding: 16px 18px; cursor: pointer; display: block; }
+  .card-head:hover { background: var(--surface-2); }
+  .card-top { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .tid { font-size: 13px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .badges { display: flex; gap: 14px; margin-left: auto; font-size: 13px; color: var(--text-2); }
+  .badges b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kw { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .chip {
+    font-size: 12.5px; color: var(--text-2); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px;
+  }
+  /* size bar = single-hue magnitude (sequential blue), 4px rounded end */
+  .bar-track { height: 6px; background: var(--accent-weak); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--mark); border-radius: 4px; }
+  .chev { transition: transform .18s; color: var(--muted); }
+  .card.open .chev { transform: rotate(90deg); }
+
+  /* Comments ---------------------------------------------------------- */
+  .comments { border-top: 1px solid var(--hairline); padding: 4px 18px 12px; display: none; }
+  .card.open .comments { display: block; }
+  .comment { padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+  .comment:last-child { border-bottom: 0; }
+  .comment .txt { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .prov { margin-top: 6px; font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .prov .who { color: var(--text-2); font-weight: 500; }
+  .prov .q { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; }
+  .more { margin: 10px 0 2px; }
+  mark { background: var(--hi); color: inherit; border-radius: 3px; padding: 0 1px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Pain Clusters</h1>
+    <div class="sub" id="fileinfo">Просмотр результатов кластеризации</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="theme" title="Сменить тему">◐</button>
+  <button class="btn btn-accent" id="load">Загрузить clusters.jsonl</button>
+  <input type="file" id="file" accept=".jsonl,.json,application/json">
+</header>
+
+<main>
+  <div id="drop">
+    <h2>Перетащите сюда <code>clusters.jsonl</code></h2>
+    <p>или нажмите «Загрузить» вверху</p>
+    <p style="color:var(--muted);font-size:13px">Файл читается локально в браузере — ничего не отправляется на сервер.</p>
+  </div>
+  <div id="app" hidden>
+    <div class="tiles" id="tiles"></div>
+    <div class="controls">
+      <label class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="q" type="search" placeholder="Поиск по ключевым словам и комментариям…" autocomplete="off">
+      </label>
+      <select class="btn" id="sort">
+        <option value="comments">По комментариям</option>
+        <option value="authors">По авторам</option>
+        <option value="channels">По каналам</option>
+        <option value="topic">По номеру темы</option>
+      </select>
+      <span class="count" id="count"></span>
+    </div>
+    <div id="list"></div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const INITIAL_COMMENTS = 100;          // lazy cap per cluster on first expand
+let CLUSTERS = [];
+let MAXN = 1;
+
+const $ = s => document.querySelector(s);
+const esc = s => (s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const comma = n => n.toLocaleString("ru-RU");
+const compact = n => n < 1000 ? String(n)
+  : n < 1e6 ? (n/1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/,"") + "K"
+  : (n/1e6).toFixed(1).replace(/\.0$/,"") + "M";
+
+function highlight(text, term) {
+  const safe = esc(text);
+  if (!term) return safe;
+  const re = new RegExp("(" + term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+  return safe.replace(re, "<mark>$1</mark>");
+}
+
+/* ---- loading ------------------------------------------------------- */
+function parseJSONL(text) {
+  const out = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try { out.push(JSON.parse(t)); } catch (_) { /* skip malformed line */ }
+  }
+  return out;
+}
+
+function ingest(text, name) {
+  const rows = parseJSONL(text).filter(r => r && Array.isArray(r.comments));
+  if (!rows.length) { alert("В файле не найдено кластеров (ожидается clusters.jsonl)."); return; }
+  rows.forEach(c => {
+    c._n = c.n_comments ?? c.comments.length;
+    c._hay = (c.keywords || []).join(" ").toLowerCase() + " " +
+             c.comments.map(x => x.text).join(" ").toLowerCase();
+  });
+  CLUSTERS = rows;
+  MAXN = Math.max(...rows.map(c => c._n), 1);
+  $("#fileinfo").textContent = name + " · " + rows.length + " кластеров";
+  $("#drop").hidden = true;
+  $("#app").hidden = false;
+  renderTiles();
+  render();
+}
+
+function renderTiles() {
+  const authors = new Set(), channels = new Set();
+  let comments = 0;
+  for (const c of CLUSTERS) {
+    comments += c._n;
+    for (const x of c.comments) { authors.add(x.author); channels.add(x.channel); }
+  }
+  const tiles = [
+    ["Кластеров", CLUSTERS.length],
+    ["Комментариев", comments],
+    ["Уникальных авторов", authors.size],
+    ["Каналов", channels.size],
+  ];
+  $("#tiles").innerHTML = tiles.map(([l, v]) => {
+    const c = compact(v), suffix = c !== comma(v) ? `<small>${comma(v)}</small>` : "";
+    return `<div class="tile"><div class="label">${l}</div><div class="value">${c}${suffix}</div></div>`;
+  }).join("");
+}
+
+/* ---- rendering ----------------------------------------------------- */
+function render() {
+  const term = $("#q").value.trim().toLowerCase();
+  const sort = $("#sort").value;
+  let list = CLUSTERS;
+  if (term) list = list.filter(c => c._hay.includes(term));
+  const key = { comments:"_n", authors:"n_authors", channels:"n_channels" }[sort];
+  list = [...list].sort(key ? (a,b) => (b[key]||0) - (a[key]||0) : (a,b) => a.topic_id - b.topic_id);
+
+  $("#count").textContent = list.length + " из " + CLUSTERS.length;
+  const host = $("#list");
+  host.innerHTML = "";
+  if (!list.length) { host.innerHTML = `<div class="empty">Ничего не найдено</div>`; return; }
+
+  for (const c of list) host.appendChild(card(c, term));
+}
+
+function card(c, term) {
+  const el = document.createElement("div");
+  el.className = "card";
+  const pct = Math.max(2, Math.round(c._n / MAXN * 100));
+  const kw = (c.keywords || []).map(k => `<span class="chip">${highlight(k, term)}</span>`).join("");
+  el.innerHTML = `
+    <div class="card-head">
+      <div class="card-top">
+        <span class="tid">#${c.topic_id}</span>
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 6 6 6-6 6"/></svg>
+        <span class="badges">
+          <span><b>${comma(c._n)}</b> комм.</span>
+          <span><b>${comma(c.n_authors ?? 0)}</b> авт.</span>
+          <span><b>${comma(c.n_channels ?? 0)}</b> кан.</span>
+        </span>
+      </div>
+      <div class="kw">${kw}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+    </div>
+    <div class="comments"></div>`;
+
+  const head = el.querySelector(".card-head");
+  const box = el.querySelector(".comments");
+  let built = false;
+  head.addEventListener("click", () => {
+    el.classList.toggle("open");
+    if (el.classList.contains("open") && !built) { buildComments(box, c, term); built = true; }
+  });
+  return el;
+}
+
+function buildComments(box, c, term) {
+  let shown = 0;
+  const render = (limit) => {
+    const frag = document.createDocumentFragment();
+    for (; shown < limit && shown < c.comments.length; shown++) frag.appendChild(commentEl(c.comments[shown], term));
+    box.querySelector(".more")?.remove();
+    box.appendChild(frag);
+    if (shown < c.comments.length) {
+      const b = document.createElement("button");
+      b.className = "btn more";
+      b.textContent = `Показать ещё ${comma(Math.min(INITIAL_COMMENTS, c.comments.length - shown))} из ${comma(c.comments.length - shown)}`;
+      b.addEventListener("click", () => render(shown + INITIAL_COMMENTS));
+      box.appendChild(b);
+    }
+  };
+  render(INITIAL_COMMENTS);
+}
+
+function commentEl(x, term) {
+  const el = document.createElement("div");
+  el.className = "comment";
+  const video = x.video_url
+    ? `<a href="${esc(x.video_url)}" target="_blank" rel="noopener">${esc(x.video_title || x.video_id || "видео")}</a>`
+    : esc(x.video_title || "");
+  const parts = [];
+  if (x.author)  parts.push(`<span class="who">${esc(x.author)}</span>`);
+  if (x.channel) parts.push(esc(x.channel));
+  if (video)     parts.push("▶ " + video);
+  if (x.query)   parts.push(`<span class="q">${esc(x.query)}</span>`);
+  el.innerHTML = `<div class="txt">${highlight(x.text, term)}</div><div class="prov">${parts.join("")}</div>`;
+  return el;
+}
+
+/* ---- wiring -------------------------------------------------------- */
+$("#load").addEventListener("click", () => $("#file").click());
+$("#file").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (f) f.text().then(t => ingest(t, f.name));
+});
+let t;
+$("#q").addEventListener("input", () => { clearTimeout(t); t = setTimeout(render, 180); });
+$("#sort").addEventListener("change", render);
+
+const drop = $("#drop");
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => {
+  const f = e.dataTransfer.files[0];
+  if (f) f.text().then(t => ingest(t, f.name));
+});
+
+$("#theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = getComputedStyle(root).getPropertyValue("--page").trim() === "#0d0d0d";
+  root.setAttribute("data-theme", dark ? "light" : "dark");
+});
+</script>
+</body>
+</html>
