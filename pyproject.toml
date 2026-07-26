@@ -29,6 +29,7 @@ dev = [
 analysis = [
     "bertopic>=0.16",
     "sentence-transformers>=3.0",
+    "stopwordsiso>=0.6.1",
 ]
 
 [tool.ruff]
