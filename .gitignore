@@ -62,6 +62,9 @@ dmypy.json
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Offline pain-mining run output (embeddings cache + generated clusters)
+docs/analysis-output/
+
 # ---> JetBrains / IntelliJ IDEA (PyCharm)
 .idea/
 *.iml
