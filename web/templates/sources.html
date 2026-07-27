@@ -4,6 +4,15 @@
 {% block page_subtitle %}Все видео с YouTube, собранные по вашим запросам{% endblock %}
 
 {% block topbar_actions %}
+{% if failed_count %}
+<form method="post" action="/videos/retry-failed" style="display:inline">
+  <input type="hidden" name="document_limit" value="100">
+  <button type="submit" class="btn btn-ghost" onclick="return confirm('Перезапустить сбор для {{ failed_count }} упавших видео?')">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+  Перезапустить упавшие ({{ failed_count }})
+  </button>
+</form>
+{% endif %}
 <button class="btn btn-primary" onclick="openModal('modal-add-source')">
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
   Собрать видео
@@ -28,6 +37,7 @@
     <a class="chip {{ 'active' if status == 'all' }}" href="/videos?status=all&amp;q={{ q | urlencode }}">Все статусы</a>
     <a class="chip {{ 'active' if status == 'processed' }}" href="/videos?status=processed&amp;q={{ q | urlencode }}">Обработано</a>
     <a class="chip {{ 'active' if status == 'pending' }}" href="/videos?status=pending&amp;q={{ q | urlencode }}">В очереди</a>
+    <a class="chip {{ 'active' if status == 'failed' }}" href="/videos?status=failed&amp;q={{ q | urlencode }}">Ошибки{% if failed_count %} ({{ failed_count }}){% endif %}</a>
     <button type="submit" class="btn btn-ghost btn-sm" style="margin-left:auto">Применить</button>
   </form>
 

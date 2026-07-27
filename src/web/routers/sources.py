@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.infrastructure.db.repositories import DocumentRepository, SourceRepository, YoutubeApiKeyRepository
-from src.pipeline import reprocess_source, run
+from src.pipeline import reprocess_failed_sources, reprocess_source, run
 from src.web.dependencies import SessionDep
 from src.web.nav import nav_context
 from src.web.templating import templates
@@ -34,7 +34,7 @@ async def list_sources(
     request: Request,
     session: SessionDep,
     q: str | None = None,
-    status: Literal["all", "processed", "pending"] = "all",
+    status: Literal["all", "processed", "pending", "failed"] = "all",
     page: int = 1,
     error: str | None = None,
 ) -> HTMLResponse:
@@ -50,6 +50,7 @@ async def list_sources(
         "q": q or "",
         "status": status,
         "error": error,
+        "failed_count": await source_repo.count_failed(),
         **await nav_context(session),
     }
     return templates.TemplateResponse(request, "sources.html", context)
@@ -119,3 +120,17 @@ async def reprocess(
         return RedirectResponse(url=f"/videos/{source_id}?error={NO_ACTIVE_KEYS_ERROR}", status_code=303)
     background_tasks.add_task(reprocess_source, source_id, document_limit)
     return RedirectResponse(url=f"/videos/{source_id}", status_code=303)
+
+
+@router.post("/videos/retry-failed")
+async def retry_failed(
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+    document_limit: Annotated[int, Form()] = 100,
+) -> RedirectResponse:
+    """Queue a retry of every source stuck in FAILED (one background task loops them sequentially)."""
+    active_keys = await YoutubeApiKeyRepository(session).list_active_keys()
+    if not active_keys:
+        return RedirectResponse(url=f"/videos?status=failed&error={NO_ACTIVE_KEYS_ERROR}", status_code=303)
+    background_tasks.add_task(reprocess_failed_sources, document_limit)
+    return RedirectResponse(url="/videos?status=failed", status_code=303)

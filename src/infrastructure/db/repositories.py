@@ -17,7 +17,7 @@ from src.infrastructure.db.models import (
     YoutubeApiKeyModel,
 )
 
-SourceStatus = Literal["all", "processed", "pending"]
+SourceStatus = Literal["all", "processed", "pending", "failed"]
 
 
 @dataclass
@@ -86,6 +86,9 @@ class SourceRepository:
                 or_(SourceModel.name.ilike(pattern), SourceModel.metadata_data["channel_title"].astext.ilike(pattern)),
             )
 
+        if status == "failed":
+            base_query = base_query.where(SourceModel.ingest_status == IngestStatus.FAILED)
+
         base_query = base_query.group_by(SourceModel.id)
         if status == "processed":
             base_query = base_query.having(document_count > 0)
@@ -105,6 +108,22 @@ class SourceRepository:
 
     async def count_all(self) -> int:
         return await self.session.scalar(select(func.count()).select_from(SourceModel)) or 0
+
+    async def count_failed(self) -> int:
+        """How many sources are stuck in FAILED — drives the retry affordance in the UI."""
+        return (
+            await self.session.scalar(
+                select(func.count()).select_from(SourceModel).where(SourceModel.ingest_status == IngestStatus.FAILED),
+            )
+            or 0
+        )
+
+    async def list_failed_ids(self) -> list[int]:
+        """IDs of every source stuck in FAILED, for a bulk retry (CLI or UI)."""
+        result = await self.session.scalars(
+            select(SourceModel.id).where(SourceModel.ingest_status == IngestStatus.FAILED),
+        )
+        return list(result.all())
 
     async def count_since(self, since: datetime) -> int:
         return (

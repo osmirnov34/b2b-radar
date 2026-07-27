@@ -160,3 +160,18 @@ async def reprocess_source(source_id: int, document_limit: int) -> None:
         saved_documents = await _save_documents(ctx, [item.source], document_limit)
 
     logger.info("Reprocessed source_id=%d: %d new document(s)", source_id, saved_documents)
+
+
+async def reprocess_failed_sources(document_limit: int) -> None:
+    """Retry document extraction for every source stuck in FAILED (e.g. after a key expired mid-run).
+
+    Sequential on purpose: parallel reprocessing would hammer the same YouTube key set concurrently,
+    which is what causes the quota/expiry failures in the first place. Sources that succeed flip to
+    SUCCESS (see _save_documents) so a repeat run only ever touches what's still failing.
+    """
+    async with get_session() as session:
+        source_ids = await SourceRepository(session).list_failed_ids()
+    logger.info("Retrying %d failed source(s).", len(source_ids))
+
+    for source_id in source_ids:
+        await reprocess_source(source_id, document_limit)
