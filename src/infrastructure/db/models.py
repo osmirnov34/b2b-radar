@@ -37,6 +37,8 @@ class SourceModel(Base):
     metadata_data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     ingest_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending", index=True)
     ingest_error: Mapped[str | None] = mapped_column(default=None)
+    # When the source last entered RUNNING; lets the startup reaper spot stalled/orphaned ingests.
+    ingest_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 

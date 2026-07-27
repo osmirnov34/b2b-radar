@@ -6,6 +6,7 @@ from http import HTTPStatus
 from http.client import HTTPException
 from typing import Any, cast
 
+import httplib2
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import HttpRequest
@@ -18,6 +19,10 @@ _RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})
 _RETRYABLE_NETWORK_ERRORS = (socket.timeout, ConnectionError, TimeoutError, ssl.SSLError, HTTPException)
 _MAX_ATTEMPTS = 4
 _INITIAL_BACKOFF_SECONDS = 1.0
+# httplib2 has no default timeout — a stalled connection would otherwise hang the request (and the
+# source's ingest_status="running") forever instead of raising socket.timeout, which is already
+# retried above and, once attempts are exhausted, correctly lands the source in FAILED.
+_REQUEST_TIMEOUT_SECONDS = 30
 
 
 class YoutubeClient:
@@ -31,7 +36,8 @@ class YoutubeClient:
 
     def _build_client(self) -> Resource:
         logger.debug("Building YouTube client with key index %s", self.current_key_index)
-        return build("youtube", "v3", developerKey=self.api_keys[self.current_key_index])
+        http = httplib2.Http(timeout=_REQUEST_TIMEOUT_SECONDS)
+        return build("youtube", "v3", developerKey=self.api_keys[self.current_key_index], http=http)
 
     @staticmethod
     def _execute_with_retry(request: HttpRequest) -> dict[str, Any]:

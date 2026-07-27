@@ -1,9 +1,9 @@
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.api_key import ApiKey
@@ -125,6 +125,30 @@ class SourceRepository:
         )
         return list(result.all())
 
+    async def reset_stale_running(self, older_than: timedelta) -> int:
+        """Flip RUNNING sources stalled longer than `older_than` to FAILED. Call at process startup.
+
+        A source is only RUNNING for the few minutes it takes to extract one video's comments
+        (ingestion is sequential, so at most one is RUNNING per process at a time). Anything RUNNING
+        far longer than that is orphaned — a crash/restart killed the coroutine before it could mark
+        the source FAILED. We key off ingest_started_at instead of blindly resetting *all* RUNNING so
+        a concurrent, still-alive ingest (e.g. a long CLI backfill running while the web app restarts)
+        is never falsely failed: its in-flight source is recent, so it's skipped. NULL covers legacy
+        rows written before ingest_started_at existed. Reset sources become visible + retryable via
+        the same failed-sources UI/CLI.
+        """
+        cutoff = datetime.now(UTC) - older_than
+        result = await self.session.execute(
+            update(SourceModel)
+            .where(
+                SourceModel.ingest_status == IngestStatus.RUNNING,
+                or_(SourceModel.ingest_started_at.is_(None), SourceModel.ingest_started_at < cutoff),
+            )
+            .values(ingest_status=IngestStatus.FAILED, ingest_error="Orphaned: process restarted mid-extraction")
+            .returning(SourceModel.id),
+        )
+        return len(result.all())
+
     async def count_since(self, since: datetime) -> int:
         return (
             await self.session.scalar(
@@ -152,6 +176,9 @@ class SourceRepository:
             raise ValueError(msg)
         model.ingest_status = status
         model.ingest_error = error
+        # Stamp the start of a RUNNING window so the startup reaper can age out stalled ingests.
+        if status == IngestStatus.RUNNING:
+            model.ingest_started_at = datetime.now(UTC)
         await self.session.flush()
 
     @staticmethod
@@ -164,6 +191,7 @@ class SourceRepository:
             metadata=model.metadata_data,
             ingest_status=IngestStatus(model.ingest_status),
             ingest_error=model.ingest_error,
+            ingest_started_at=model.ingest_started_at,
             extracted_at=model.extracted_at,
         )
 

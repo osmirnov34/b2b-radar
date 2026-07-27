@@ -32,4 +32,5 @@ class Source(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     ingest_status: IngestStatus = IngestStatus.PENDING
     ingest_error: str | None = None
+    ingest_started_at: datetime | None = None
     extracted_at: datetime | None = None
