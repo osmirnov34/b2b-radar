@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Запросы{% endblock %}
+{% block page_title %}Поисковые запросы{% endblock %}
+{% block page_subtitle %}Ключевые слова, по которым уже запускался поиск видео на YouTube{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ключевое слово</th>
+          <th>Найдено видео</th>
+          <th>Последний поиск</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in queries %}
+        <tr>
+          <td class="cell-title"><a href="/videos?q={{ item.query | urlencode }}">{{ item.query }}</a></td>
+          <td>{{ item.source_count }}</td>
+          <td class="text-tertiary">{{ item.last_used | humanize_ru }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3"><div class="empty-state"><div class="empty-state-title">Запросов ещё нет</div>Запустите поиск видео — использованные ключевые слова появятся здесь</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
