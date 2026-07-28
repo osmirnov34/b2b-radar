@@ -33,6 +33,15 @@ class SourceListItem:
 
 
 @dataclass
+class SearchQueryItem:
+    """A distinct search query with how many sources it found and when it was last used."""
+
+    query: str
+    source_count: int
+    last_used: datetime
+
+
+@dataclass
 class DocumentListItem:
     """A document enriched with its parent source name, for cross-source list views."""
 
@@ -108,6 +117,24 @@ class SourceRepository:
 
     async def count_all(self) -> int:
         return await self.session.scalar(select(func.count()).select_from(SourceModel)) or 0
+
+    async def list_search_queries(self) -> list["SearchQueryItem"]:
+        """Distinct search queries used to discover sources, newest first.
+
+        Reads ``metadata_data->>'search_query'`` (stamped in the pipeline). A source's query is the
+        first one that found it (dedup by URL), so per-query counts can undercount overlapping
+        queries, and queries that found nothing are absent — this is a history of what was searched.
+        """
+        query_text = SourceModel.metadata_data["search_query"].astext
+        rows = (
+            await self.session.execute(
+                select(query_text, func.count(SourceModel.id), func.max(SourceModel.extracted_at))
+                .where(query_text.isnot(None))
+                .group_by(query_text)
+                .order_by(func.max(SourceModel.extracted_at).desc()),
+            )
+        ).all()
+        return [SearchQueryItem(query=q, source_count=count, last_used=last_used) for q, count, last_used in rows]
 
     async def count_failed(self) -> int:
         """How many sources are stuck in FAILED — drives the retry affordance in the UI."""

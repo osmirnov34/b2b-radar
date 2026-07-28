@@ -77,6 +77,17 @@ async def add_source(
     return RedirectResponse(url="/videos", status_code=303)
 
 
+@router.get("/queries", response_class=HTMLResponse)
+async def list_queries(request: Request, session: SessionDep) -> HTMLResponse:
+    queries = await SourceRepository(session).list_search_queries()
+    context = {
+        "request": request,
+        "queries": queries,
+        **await nav_context(session),
+    }
+    return templates.TemplateResponse(request, "queries.html", context)
+
+
 @router.get("/videos/{source_id}", response_class=HTMLResponse)
 async def source_detail(
     request: Request,
