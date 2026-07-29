@@ -81,7 +81,6 @@ async def export_documents_jsonl(
             async for document, source in document_repo.stream_for_export(search=q, since=since):
                 row = {
                     "video_title": source.name,
-                    "video_description": source.metadata_data.get("description"),
                     "video_channel": source.metadata_data.get("channel_title"),
                     "video_url": source.url,
                     "video_id": _extract_video_id(source.url),
