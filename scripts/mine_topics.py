@@ -24,6 +24,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# Running a file inside scripts/ puts that directory, rather than the repository root, on
+# sys.path. Add the root so this standalone CLI can reuse the application's noise filter.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.infrastructure.extractor.noise import is_noise as is_pipeline_noise
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -99,21 +107,16 @@ def is_noise(text: str, min_length: int) -> bool:
 def clean(rows: list[dict[str, str]], min_length: int, spam_filter: bool = False) -> list[dict[str, str]]:
     """Filter noise and drop exact-duplicate texts (near-dup handled later on embeddings).
 
-    With spam_filter=True, additionally apply the Gopher/C4-lite heuristics from
-    eval_spam_filter.py as a cheap input gate (0 tokens) — drops glued gibberish,
-    emoji/symbol spam, digit-dumps, and single-word-repeat comments before embedding.
+    With spam_filter=True, additionally apply the pipeline's cheap noise heuristics —
+    drops glued gibberish and emoji/symbol spam before embedding.
     Off by default so the calibrated runs in the methodology (§9) stay reproducible.
     """
-    spam_reasons = None
-    if spam_filter:
-        from eval_spam_filter import reasons as spam_reasons  # scripts/ is on sys.path[0]
-
     seen: set[str] = set()
     kept: list[dict[str, str]] = []
     for row in rows:
         if is_noise(row["text"], min_length):
             continue
-        if spam_reasons is not None and spam_reasons(row["text"]):
+        if spam_filter and is_pipeline_noise(row["text"]):
             continue
         key = row["text"].lower().strip()
         if key in seen:
@@ -356,7 +359,7 @@ def main() -> None:
     parser.add_argument(
         "--spam-filter",
         action="store_true",
-        help="Also apply the Gopher/C4-lite spam heuristics (eval_spam_filter.py) as an input gate.",
+        help="Also apply the pipeline's emoji/symbol and glued-gibberish noise heuristics as an input gate.",
     )
     parser.add_argument("--near-dup-threshold", type=float, default=0.95, help="Cosine >= this = near-duplicate.")
     parser.add_argument("--no-near-dup", action="store_true", help="Skip the near-duplicate collapse.")

@@ -21,7 +21,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.28.0",
     "pre-commit",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
     "ruff",
     "mypy",
 ]
@@ -62,7 +65,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/*" = ["S101"]
+"tests/*" = ["ANN401", "PLR2004", "RUF001", "S101", "SLF001"]
 "src/infrastructure/db/repositories.py" = ["PLR0913"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
@@ -86,3 +89,12 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 strict_equality = true
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["integration: requires the dedicated PostgreSQL test database"]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
