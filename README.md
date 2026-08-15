@@ -74,6 +74,8 @@ The JSONL and run-metadata formats are documented in [`docs/analysis-contracts.m
 Typed runtime parameters and notebook usage are documented in
 [`docs/analysis-configuration.md`](docs/analysis-configuration.md); a complete JSON example is available at
 [`configs/topic-analysis.example.json`](configs/topic-analysis.example.json).
+The separation between persisted contracts and internal analysis objects is described in
+[`docs/analysis-models.md`](docs/analysis-models.md).
 
 ### Deployment (Caddy + HTTP Basic Auth)
 
