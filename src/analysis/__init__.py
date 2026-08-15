@@ -10,6 +10,15 @@ from src.analysis.config import (
     load_analysis_config,
     save_analysis_config,
 )
+from src.analysis.inspection import (
+    DatasetFormat,
+    DatasetInspection,
+    FormatInspection,
+    InspectionError,
+    TextLengthStats,
+    detect_dataset_format,
+    inspect_comments_jsonl,
+)
 from src.analysis.models import (
     AnalysisCounts,
     AnalysisResult,
@@ -49,6 +58,8 @@ __all__ = [
     "ClusterRecord",
     "ClusteringConfig",
     "CommentRecord",
+    "DatasetFormat",
+    "DatasetInspection",
     "DeduplicationConfig",
     "DeduplicationResult",
     "DeduplicationStats",
@@ -56,10 +67,15 @@ __all__ = [
     "DuplicatePair",
     "EmbeddingConfig",
     "ExportedComment",
+    "FormatInspection",
+    "InspectionError",
+    "TextLengthStats",
     "TopicAssignment",
     "TopicSummary",
     "classify",
     "clean",
+    "detect_dataset_format",
+    "inspect_comments_jsonl",
     "load_analysis_config",
     "save_analysis_config",
 ]
