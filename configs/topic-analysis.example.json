@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "input_path": "data/comments.jsonl",
+  "output_dir": "docs/analysis-output",
+  "limit": null,
+  "sample_size": null,
+  "cleaning": {
+    "min_length": 20,
+    "spam_filter": false
+  },
+  "embedding": {
+    "model_name": "intfloat/multilingual-e5-large",
+    "threads": 4,
+    "batch_size": 64,
+    "max_seq_length": 512
+  },
+  "deduplication": {
+    "enabled": true,
+    "threshold": 0.95,
+    "block_size": 2048,
+    "sample_pairs": 8
+  },
+  "clustering": {
+    "min_topic_size": 250,
+    "reduce_outliers": true,
+    "reduce_outliers_threshold": 0.9,
+    "random_seed": 42,
+    "top_n": 50
+  }
+}
