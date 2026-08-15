@@ -39,7 +39,8 @@ from src.analysis.config import (
     DeduplicationConfig,
     EmbeddingConfig,
 )
-from src.analysis.schemas import ANALYSIS_SCHEMA_VERSION
+from src.analysis.models import CommentRecord
+from src.analysis.schemas import ANALYSIS_SCHEMA_VERSION, ClusterComment, ClusterRecord, ExportedComment
 from src.infrastructure.extractor.noise import is_noise as is_pipeline_noise
 
 if TYPE_CHECKING:
@@ -71,32 +72,18 @@ CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 LATIN_RE = re.compile(r"[a-z]", re.IGNORECASE)
 
 
-def load_comments(path: Path) -> list[dict[str, str]]:
+def load_comments(path: Path) -> list[CommentRecord]:
     """Read a JSONL export, keeping text + domain facets (author/channel/query/video_id)."""
-    rows: list[dict[str, str]] = []
+    rows: list[CommentRecord] = []
     with path.open(encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
-            d = json.loads(line)
-            text = (d.get("comment_text") or "").strip()
-            if text:
-                rows.append(
-                    {
-                        "text": text,
-                        "author": d.get("comment_author") or "",
-                        "channel": d.get("video_channel") or "",
-                        "query": d.get("search_query") or "",
-                        "video_id": d.get("video_id") or "",
-                        "video_title": d.get("video_title") or "",
-                    },
-                )
+            comment = CommentRecord.from_export(ExportedComment.model_validate(json.loads(line)))
+            if comment.text:
+                rows.append(comment)
     return rows
-
-
-def _video_url(video_id: str) -> str:
-    return f"https://www.youtube.com/watch?v={video_id}" if video_id else ""
 
 
 def is_noise(text: str, min_length: int) -> bool:
@@ -114,7 +101,7 @@ def is_noise(text: str, min_length: int) -> bool:
     return n_cyr + n_lat > 0 and n_cyr / (n_cyr + n_lat) < 0.5
 
 
-def clean(rows: list[dict[str, str]], min_length: int, spam_filter: bool = False) -> list[dict[str, str]]:
+def clean(rows: list[CommentRecord], min_length: int, spam_filter: bool = False) -> list[CommentRecord]:
     """Filter noise and drop exact-duplicate texts (near-dup handled later on embeddings).
 
     With spam_filter=True, additionally apply the pipeline's cheap noise heuristics —
@@ -122,13 +109,13 @@ def clean(rows: list[dict[str, str]], min_length: int, spam_filter: bool = False
     Off by default so the calibrated runs in the methodology (§9) stay reproducible.
     """
     seen: set[str] = set()
-    kept: list[dict[str, str]] = []
+    kept: list[CommentRecord] = []
     for row in rows:
-        if is_noise(row["text"], min_length):
+        if is_noise(row.text, min_length):
             continue
-        if spam_filter and is_pipeline_noise(row["text"]):
+        if spam_filter and is_pipeline_noise(row.text):
             continue
-        key = row["text"].lower().strip()
+        key = row.normalized_text_key
         if key in seen:
             continue
         seen.add(key)
@@ -278,8 +265,7 @@ def build_topic_model(min_topic_size: int) -> object:
 
 def write_results(
     topic_model: object,
-    texts: list[str],
-    meta: list[dict[str, str]],
+    comments: list[CommentRecord],
     topics: list[int],
     out_dir: Path,
     top_n: int,
@@ -292,6 +278,7 @@ def write_results(
     Everything to render a cluster (its comments + where each came from) is in that one record —
     no joins. topics_summary.md is a truncated human-readable overview for eyeballing the run.
     """
+    texts = [comment.text for comment in comments]
     info = topic_model.get_topic_info()
     n_topics = int((info["Topic"] >= 0).sum())
     n_outliers = sum(1 for t in topics if t == -1)
@@ -299,21 +286,11 @@ def write_results(
     # Group by topic, keeping full comment records; distinct authors/channels = honest breadth.
     authors_by_topic: dict[int, set[str]] = {}
     channels_by_topic: dict[int, set[str]] = {}
-    comments_by_topic: dict[int, list[dict[str, str]]] = {}
-    for text, m, topic in zip(texts, meta, topics, strict=True):
-        authors_by_topic.setdefault(topic, set()).add(m["author"])
-        channels_by_topic.setdefault(topic, set()).add(m["channel"])
-        comments_by_topic.setdefault(topic, []).append(
-            {
-                "text": text,
-                "author": m["author"],
-                "channel": m["channel"],
-                "query": m["query"],
-                "video_id": m["video_id"],
-                "video_title": m["video_title"],
-                "video_url": _video_url(m["video_id"]),
-            },
-        )
+    comments_by_topic: dict[int, list[ClusterComment]] = {}
+    for comment, topic in zip(comments, topics, strict=True):
+        authors_by_topic.setdefault(topic, set()).add(comment.author)
+        channels_by_topic.setdefault(topic, set()).add(comment.channel)
+        comments_by_topic.setdefault(topic, []).append(comment.to_cluster_comment())
 
     out_dir.mkdir(parents=True, exist_ok=True)
     md: list[str] = ["# Discovered topics (BERTopic)\n"]
@@ -324,19 +301,17 @@ def write_results(
             if topic_id == -1:
                 continue
             keywords = [w for w, _ in topic_model.get_topic(topic_id)[:8] if w]  # drop "" from degenerate topics
-            comments = comments_by_topic.get(topic_id, [])
+            topic_comments = comments_by_topic.get(topic_id, [])
+            cluster = ClusterRecord(
+                topic_id=topic_id,
+                n_comments=int(row["Count"]),
+                n_authors=len(authors_by_topic.get(topic_id, set())),
+                n_channels=len(channels_by_topic.get(topic_id, set())),
+                keywords=keywords,
+                comments=topic_comments,
+            )
             fh.write(
-                json.dumps(
-                    {
-                        "topic_id": topic_id,
-                        "n_comments": int(row["Count"]),
-                        "n_authors": len(authors_by_topic.get(topic_id, set())),
-                        "n_channels": len(channels_by_topic.get(topic_id, set())),
-                        "keywords": keywords,
-                        "comments": comments,
-                    },
-                    ensure_ascii=False,
-                )
+                json.dumps(cluster.model_dump(mode="json"), ensure_ascii=False)
                 + "\n",
             )
             if topic_id < top_n:  # human summary: keywords + 5 sample texts
@@ -345,7 +320,7 @@ def write_results(
                           f"{len(channels_by_topic.get(topic_id, set()))} channels\n")
                 md.append(f"**Keywords:** {', '.join(keywords)}\n")
                 md.append("**Samples:**\n")
-                md.extend(f"- {c['text'].replace(chr(10), ' ').strip()[:300]}" for c in comments[:5])
+                md.extend(f"- {comment.text.replace(chr(10), ' ').strip()[:300]}" for comment in topic_comments[:5])
 
     (out_dir / "topics_summary.md").write_text("\n".join(md), encoding="utf-8")
 
@@ -456,15 +431,13 @@ def main() -> None:
         kept = kept[: config.limit]
         print(f"Limited to first {len(kept)} comments (--limit).", file=sys.stderr)
 
-    n_authors = len(Counter(r["author"] for r in kept))
-    print(f"Distinct authors: {n_authors}; distinct channels: {len({r['channel'] for r in kept})}.", file=sys.stderr)
+    n_authors = len(Counter(comment.author for comment in kept))
+    print(
+        f"Distinct authors: {n_authors}; distinct channels: {len({comment.channel for comment in kept})}.",
+        file=sys.stderr,
+    )
 
-    texts = [r["text"] for r in kept]
-    meta = [
-        {"author": r["author"], "channel": r["channel"], "query": r["query"],
-         "video_id": r["video_id"], "video_title": r["video_title"]}
-        for r in kept
-    ]
+    texts = [comment.text for comment in kept]
     n_clean = len(texts)
 
     import numpy as np
@@ -500,7 +473,7 @@ def main() -> None:
             print(f"  keep {texts[rep][:120]!r}\n  drop {texts[dup][:120]!r}", file=sys.stderr)
         embeddings = embeddings[np.array(keep_idx)]
         texts = [texts[i] for i in keep_idx]
-        meta = [meta[i] for i in keep_idx]
+        kept = [kept[i] for i in keep_idx]
 
     topic_model = build_topic_model(config.clustering.min_topic_size)
     print("Fitting BERTopic ...", file=sys.stderr)
@@ -535,8 +508,7 @@ def main() -> None:
 
     n_topics, n_outliers = write_results(
         topic_model,
-        texts,
-        meta,
+        kept,
         topics,
         config.output_dir,
         config.clustering.top_n,

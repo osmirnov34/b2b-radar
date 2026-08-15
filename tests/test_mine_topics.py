@@ -2,7 +2,18 @@ from pathlib import Path
 
 import pytest
 
-from scripts.mine_topics import build_parser, clean, clustering_prefix, config_from_args, parse_config
+from scripts.mine_topics import (
+    build_parser,
+    clean,
+    clustering_prefix,
+    config_from_args,
+    load_comments,
+    parse_config,
+    write_results,
+)
+from src.analysis import ClusterRecord, CommentRecord
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_model_specific_clustering_prefixes() -> None:
@@ -13,11 +24,71 @@ def test_model_specific_clustering_prefixes() -> None:
 
 def test_clean_with_spam_filter_uses_pipeline_noise_gate() -> None:
     rows = [
-        {"text": "Нам нужен простой CRM для работы с клиентами"},
-        {"text": "оченьдлинноесклеенноесловобезпробелов"},
+        CommentRecord(text="Нам нужен простой CRM для работы с клиентами"),
+        CommentRecord(text="оченьдлинноесклеенноесловобезпробелов"),
     ]
 
     assert clean(rows, min_length=10, spam_filter=True) == [rows[0]]
+
+
+def test_load_comments_returns_normalized_typed_records() -> None:
+    comments = load_comments(FIXTURES_DIR / "comments.jsonl")
+
+    assert len(comments) == 2
+    assert all(isinstance(comment, CommentRecord) for comment in comments)
+    assert comments[0].author == "Анна"
+    assert comments[0].video_url == "https://www.youtube.com/watch?v=video-1"
+
+
+def test_clean_collapses_case_and_whitespace_exact_duplicates() -> None:
+    rows = [
+        CommentRecord(text="CRM  для бизнеса"),
+        CommentRecord(text=" crm для БИЗНЕСА "),
+    ]
+
+    assert clean(rows, min_length=1) == [rows[0]]
+
+
+class _TopicColumn:
+    def __ge__(self, _value: int) -> "_TopicColumn":
+        return self
+
+    @staticmethod
+    def sum() -> int:
+        return 1
+
+
+class _TopicInfo:
+    def __getitem__(self, _key: str) -> _TopicColumn:
+        return _TopicColumn()
+
+    @staticmethod
+    def iterrows() -> list[tuple[int, dict[str, int]]]:
+        return [(0, {"Topic": 0, "Count": 2})]
+
+
+class _TopicModel:
+    @staticmethod
+    def get_topic_info() -> _TopicInfo:
+        return _TopicInfo()
+
+    @staticmethod
+    def get_topic(_topic_id: int) -> list[tuple[str, float]]:
+        return [("crm", 0.8), ("клиенты", 0.7)]
+
+
+def test_write_results_preserves_cluster_contract(tmp_path: Path) -> None:
+    comments = [
+        CommentRecord(text="Первый комментарий", author="Анна", channel="Канал 1", video_id="v1"),
+        CommentRecord(text="Второй комментарий", author="Иван", channel="Канал 2", video_id="v2"),
+    ]
+
+    n_topics, n_outliers = write_results(_TopicModel(), comments, [0, 0], tmp_path, top_n=1)
+    record = ClusterRecord.model_validate_json((tmp_path / "clusters.jsonl").read_text(encoding="utf-8"))
+
+    assert (n_topics, n_outliers) == (1, 0)
+    assert record.n_comments == 2
+    assert record.comments[0].video_url == "https://www.youtube.com/watch?v=v1"
 
 
 def test_cli_defaults_map_to_internal_config() -> None:
