@@ -55,6 +55,8 @@ def test_inspection_reports_schema_and_json_errors_safely(tmp_path: Path) -> Non
 
     report = inspect_comments_jsonl(path, max_error_rate=1)
 
+    assert report.format.detected == DatasetFormat.JSONL
+    assert report.format.matches
     assert report.contract_valid == 1
     assert report.contract_invalid == 1
     assert report.json_invalid == 1

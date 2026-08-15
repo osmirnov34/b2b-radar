@@ -65,6 +65,10 @@ dmypy.json
 # Offline pain-mining run output (embeddings cache + generated clusters)
 docs/analysis-output/
 
+# Local datasets, inspection reports, samples, and derived artifacts
+data/*
+!data/README.md
+
 # ---> JetBrains / IntelliJ IDEA (PyCharm)
 .idea/
 *.iml

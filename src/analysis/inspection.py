@@ -174,8 +174,9 @@ def detect_dataset_format(path: Path, *, expected: DatasetFormat = DatasetFormat
                 if isinstance(json.loads(line), dict):
                     line_objects += 1
             except json.JSONDecodeError:
-                break
-        if non_empty_lines and line_objects == len(non_empty_lines):
+                continue
+        looks_like_jsonl = non_empty_lines and line_objects * 2 >= len(non_empty_lines)
+        if looks_like_jsonl:
             if len(non_empty_lines) == 1 and path.suffix.lower() == ".json":
                 detected = DatasetFormat.JSON_OBJECT
             else:

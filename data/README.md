@@ -1,0 +1,11 @@
+# Local analysis data
+
+This directory is intentionally excluded from Git except for this guide.
+
+- `raw/` — immutable downloaded source files.
+- `interim/` — normalized or converted intermediate files.
+- `processed/` — cleaned datasets.
+- `samples/` — deterministic research subsets and metadata.
+- `reports/` — dataset profiles and sanitized validation errors.
+
+Never commit comments, embeddings, generated reports, or model artifacts.

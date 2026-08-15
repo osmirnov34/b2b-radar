@@ -10,6 +10,7 @@ from src.analysis.config import (
     load_analysis_config,
     save_analysis_config,
 )
+from src.analysis.dataset import SampleMetadata, create_research_sample, write_inspection_reports
 from src.analysis.inspection import (
     DatasetFormat,
     DatasetInspection,
@@ -69,13 +70,16 @@ __all__ = [
     "ExportedComment",
     "FormatInspection",
     "InspectionError",
+    "SampleMetadata",
     "TextLengthStats",
     "TopicAssignment",
     "TopicSummary",
     "classify",
     "clean",
+    "create_research_sample",
     "detect_dataset_format",
     "inspect_comments_jsonl",
     "load_analysis_config",
     "save_analysis_config",
+    "write_inspection_reports",
 ]
