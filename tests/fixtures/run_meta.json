@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "model": "intfloat/multilingual-e5-large",
+  "near_dup_threshold": 0.95,
+  "reduce_outliers_threshold": 0.9,
+  "min_topic_size": 250,
+  "n_input": 1000,
+  "n_after_clean": 800,
+  "n_after_dedup": 700,
+  "n_topics": 12,
+  "n_outliers_before_reduction": 200,
+  "n_outliers": 80,
+  "created_at": "2026-08-15T10:00:00+00:00"
+}

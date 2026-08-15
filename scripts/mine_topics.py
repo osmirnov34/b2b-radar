@@ -30,6 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.analysis.schemas import ANALYSIS_SCHEMA_VERSION
 from src.infrastructure.extractor.noise import is_noise as is_pipeline_noise
 
 if TYPE_CHECKING:
@@ -468,6 +469,7 @@ def main() -> None:
     n_topics, n_outliers = write_results(topic_model, texts, meta, topics, args.out_dir, args.top_n)
 
     run_meta = {
+        "schema_version": ANALYSIS_SCHEMA_VERSION,
         "model": args.model,
         "near_dup_threshold": None if args.no_near_dup else args.near_dup_threshold,
         "reduce_outliers_threshold": None if args.no_reduce_outliers else args.reduce_outliers_threshold,
