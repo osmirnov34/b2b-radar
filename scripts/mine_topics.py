@@ -22,7 +22,9 @@ import sys
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
+
+from pydantic import ValidationError
 
 # Running a file inside scripts/ puts that directory, rather than the repository root, on
 # sys.path. Add the root so this standalone CLI can reuse the application's noise filter.
@@ -30,6 +32,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.analysis.config import (
+    AnalysisConfig,
+    CleaningConfig,
+    ClusteringConfig,
+    DeduplicationConfig,
+    EmbeddingConfig,
+)
 from src.analysis.schemas import ANALYSIS_SCHEMA_VERSION
 from src.infrastructure.extractor.noise import is_noise as is_pipeline_noise
 
@@ -345,7 +354,7 @@ def write_results(
     return n_topics, n_outliers
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Discover pain topics from a comments JSONL via BERTopic.")
     parser.add_argument("jsonl", type=Path, help="Path to the comments JSONL export.")
     parser.add_argument(
@@ -384,23 +393,67 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=0, help="Only process the first N cleaned comments (0 = all).")
     parser.add_argument("--sample", type=int, default=0, help="Randomly sample N raw comments before cleaning (0 = all).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for --sample (reproducible dev subsets).")
-    args = parser.parse_args()
+    return parser
 
-    limit_threads(args.threads)
 
-    rows = load_comments(args.jsonl)
-    if 0 < args.sample < len(rows):  # random subset for fast dev loops; unlike --limit it isn't order-biased
+def config_from_args(args: argparse.Namespace) -> AnalysisConfig:
+    """Translate the stable CLI interface into the strict internal configuration model."""
+    return AnalysisConfig(
+        input_path=args.jsonl,
+        output_dir=args.out_dir,
+        limit=None if args.limit == 0 else args.limit,
+        sample_size=None if args.sample == 0 else args.sample,
+        cleaning=CleaningConfig(min_length=args.min_length, spam_filter=args.spam_filter),
+        embedding=EmbeddingConfig(
+            model_name=args.model,
+            threads=args.threads,
+            batch_size=64 if args.batch_size == 0 else args.batch_size,
+        ),
+        deduplication=DeduplicationConfig(
+            enabled=not args.no_near_dup,
+            threshold=args.near_dup_threshold,
+        ),
+        clustering=ClusteringConfig(
+            min_topic_size=args.min_topic_size,
+            reduce_outliers=not args.no_reduce_outliers,
+            reduce_outliers_threshold=args.reduce_outliers_threshold,
+            random_seed=args.seed,
+            top_n=args.top_n,
+        ),
+    )
+
+
+def parse_config(argv: Sequence[str] | None = None) -> AnalysisConfig:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return config_from_args(args)
+    except ValidationError as exc:
+        details = "; ".join(f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors())
+        parser.error(f"invalid analysis configuration: {details}")
+
+
+def main() -> None:
+    config = parse_config()
+
+    limit_threads(config.embedding.threads)
+
+    rows = load_comments(config.input_path)
+    if config.sample_size is not None and config.sample_size < len(rows):
         import random
 
-        random.Random(args.seed).shuffle(rows)
-        rows = rows[: args.sample]
-        print(f"Sampled {len(rows)} random comments (--sample, seed={args.seed}).", file=sys.stderr)
-    kept = clean(rows, args.min_length, spam_filter=args.spam_filter)
-    gate = " (+spam-filter)" if args.spam_filter else ""
+        random.Random(config.clustering.random_seed).shuffle(rows)
+        rows = rows[: config.sample_size]
+        print(
+            f"Sampled {len(rows)} random comments (--sample, seed={config.clustering.random_seed}).",
+            file=sys.stderr,
+        )
+    kept = clean(rows, config.cleaning.min_length, spam_filter=config.cleaning.spam_filter)
+    gate = " (+spam-filter)" if config.cleaning.spam_filter else ""
     print(f"Loaded {len(rows)} comments; kept {len(kept)} after cleaning{gate}.", file=sys.stderr)
 
-    if args.limit > 0:
-        kept = kept[: args.limit]
+    if config.limit is not None:
+        kept = kept[: config.limit]
         print(f"Limited to first {len(kept)} comments (--limit).", file=sys.stderr)
 
     n_authors = len(Counter(r["author"] for r in kept))
@@ -419,18 +472,29 @@ def main() -> None:
     # Cache embeddings, keyed by model + a content hash (not just count: two runs can have the
     # same N from different --sample seeds or --min-length values, which would silently reuse
     # the wrong vectors if the count alone were the key).
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
     content_hash = hashlib.sha1("\n".join(texts).encode("utf-8")).hexdigest()[:16]  # noqa: S324
-    cache = args.out_dir / f"emb_{args.model.split('/')[-1]}_{len(texts)}_{content_hash}.npy"
+    cache = config.output_dir / f"emb_{config.embedding.model_name.split('/')[-1]}_{len(texts)}_{content_hash}.npy"
     if cache.exists():
         print(f"Reusing cached embeddings: {cache}", file=sys.stderr)
         embeddings = np.load(cache)
     else:
-        embeddings = embed(texts, args.model, args.threads, batch_size=args.batch_size)
+        embeddings = embed(
+            texts,
+            config.embedding.model_name,
+            config.embedding.threads,
+            batch_size=config.embedding.batch_size,
+            max_seq_length=config.embedding.max_seq_length,
+        )
         np.save(cache, embeddings)
 
-    if not args.no_near_dup:
-        keep_idx, examples = near_dedup(embeddings, args.near_dup_threshold)
+    if config.deduplication.enabled:
+        keep_idx, examples = near_dedup(
+            embeddings,
+            config.deduplication.threshold,
+            block_size=config.deduplication.block_size,
+            n_examples=config.deduplication.sample_pairs,
+        )
         print(f"Near-dup: kept {len(keep_idx)}, dropped {len(texts) - len(keep_idx)}.", file=sys.stderr)
         for rep, dup in examples:  # eyeball to re-tune threshold for this model
             print(f"  keep {texts[rep][:120]!r}\n  drop {texts[dup][:120]!r}", file=sys.stderr)
@@ -438,24 +502,27 @@ def main() -> None:
         texts = [texts[i] for i in keep_idx]
         meta = [meta[i] for i in keep_idx]
 
-    topic_model = build_topic_model(args.min_topic_size)
+    topic_model = build_topic_model(config.clustering.min_topic_size)
     print("Fitting BERTopic ...", file=sys.stderr)
     topics_arr, _ = topic_model.fit_transform(texts, embeddings=embeddings)
     topics: list[int] = list(topics_arr)
     n_outliers_before = sum(1 for t in topics if t == -1)
 
-    if not args.no_reduce_outliers and n_outliers_before:
+    if config.clustering.reduce_outliers and n_outliers_before:
         # Thresholded embedding reassignment: an outlier joins the topic whose centroid it's closest
         # to, but only if that cosine similarity clears --reduce-outliers-threshold; otherwise it
         # honestly stays -1. We use the "embeddings" strategy (not "c-tf-idf") because these are short
         # comments: their c-TF-IDF vectors are too sparse to match any topic above a sane threshold
         # (c-TF-IDF reassigned ~zero here), whereas embeddings capture short-text meaning. Reuses the
         # vectors we already computed — no re-encoding.
-        print(f"Reducing {n_outliers_before} outliers (embeddings, threshold={args.reduce_outliers_threshold}) ...",
-              file=sys.stderr)
+        print(
+            f"Reducing {n_outliers_before} outliers "
+            f"(embeddings, threshold={config.clustering.reduce_outliers_threshold}) ...",
+            file=sys.stderr,
+        )
         topics = topic_model.reduce_outliers(
             texts, topics, strategy="embeddings", embeddings=embeddings,
-            threshold=args.reduce_outliers_threshold,
+            threshold=config.clustering.reduce_outliers_threshold,
         )
         # Refresh keywords with the new assignments. Must re-pass our vectorizer + ctfidf: without
         # them update_topics silently falls back to a DEFAULT CountVectorizer, dropping the Russian
@@ -466,14 +533,23 @@ def main() -> None:
             ctfidf_model=topic_model.ctfidf_model,
         )
 
-    n_topics, n_outliers = write_results(topic_model, texts, meta, topics, args.out_dir, args.top_n)
+    n_topics, n_outliers = write_results(
+        topic_model,
+        texts,
+        meta,
+        topics,
+        config.output_dir,
+        config.clustering.top_n,
+    )
 
     run_meta = {
         "schema_version": ANALYSIS_SCHEMA_VERSION,
-        "model": args.model,
-        "near_dup_threshold": None if args.no_near_dup else args.near_dup_threshold,
-        "reduce_outliers_threshold": None if args.no_reduce_outliers else args.reduce_outliers_threshold,
-        "min_topic_size": args.min_topic_size,
+        "model": config.embedding.model_name,
+        "near_dup_threshold": config.deduplication.threshold if config.deduplication.enabled else None,
+        "reduce_outliers_threshold": (
+            config.clustering.reduce_outliers_threshold if config.clustering.reduce_outliers else None
+        ),
+        "min_topic_size": config.clustering.min_topic_size,
         "n_input": len(rows),
         "n_after_clean": n_clean,
         "n_after_dedup": len(texts),
@@ -482,8 +558,11 @@ def main() -> None:
         "n_outliers": n_outliers,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    (args.out_dir / "run_meta.json").write_text(json.dumps(run_meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Wrote {args.out_dir}/run_meta.json")
+    (config.output_dir / "run_meta.json").write_text(
+        json.dumps(run_meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"Wrote {config.output_dir}/run_meta.json")
 
 
 if __name__ == "__main__":

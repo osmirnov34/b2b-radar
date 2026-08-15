@@ -71,6 +71,9 @@ uv run python scripts/mine_topics.py comments.jsonl --out-dir docs/analysis-outp
 
 The generated `clusters.jsonl` can be uploaded on `/analysis`. Embedding models are downloaded on first use.
 The JSONL and run-metadata formats are documented in [`docs/analysis-contracts.md`](docs/analysis-contracts.md).
+Typed runtime parameters and notebook usage are documented in
+[`docs/analysis-configuration.md`](docs/analysis-configuration.md); a complete JSON example is available at
+[`configs/topic-analysis.example.json`](configs/topic-analysis.example.json).
 
 ### Deployment (Caddy + HTTP Basic Auth)
 
