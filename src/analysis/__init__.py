@@ -1,5 +1,6 @@
 """Reusable contracts and services for offline topic analysis."""
 
+from src.analysis.cleaning import THANKS_TOKENS, classify, clean
 from src.analysis.config import (
     AnalysisConfig,
     CleaningConfig,
@@ -34,6 +35,7 @@ from src.analysis.schemas import (
 
 __all__ = [
     "ANALYSIS_SCHEMA_VERSION",
+    "THANKS_TOKENS",
     "AnalysisConfig",
     "AnalysisCounts",
     "AnalysisResult",
@@ -56,6 +58,8 @@ __all__ = [
     "ExportedComment",
     "TopicAssignment",
     "TopicSummary",
+    "classify",
+    "clean",
     "load_analysis_config",
     "save_analysis_config",
 ]
