@@ -7,7 +7,9 @@ import heapq
 import json
 import re
 from collections import Counter
+from csv import writer
 from datetime import UTC, datetime
+from html import escape
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -292,3 +294,135 @@ def profile_development_dataset(
         top_query_groups=_hashed_top(queries, active_config.top_groups),
         created_at=datetime.now(UTC),
     )
+
+
+def _write_counter_csv(path: Path, label: str, values: dict[str, int]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as target:
+        csv_writer = writer(target)
+        csv_writer.writerow([label, "records"])
+        csv_writer.writerows(values.items())
+
+
+def _bar_chart_svg(title: str, values: dict[str, int]) -> str:
+    width = 900
+    left = 210
+    row_height = 34
+    height = max(120, 80 + row_height * len(values))
+    maximum = max(values.values(), default=1)
+    bars: list[str] = []
+    for index, (label, count) in enumerate(values.items()):
+        y = 55 + index * row_height
+        bar_width = int((width - left - 90) * count / maximum) if maximum else 0
+        bars.extend(
+            (
+                f'<text x="{left - 10}" y="{y + 17}" text-anchor="end">{escape(label)}</text>',
+                f'<rect x="{left}" y="{y}" width="{bar_width}" height="22" rx="3" fill="#4472c4"/>',
+                f'<text x="{left + bar_width + 8}" y="{y + 17}">{count}</text>',
+            ),
+        )
+    content = "".join(bars)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}"><style>text{{font:14px sans-serif;fill:#222}}</style>'
+        f'<text x="20" y="30" style="font-size:20px;font-weight:bold">{escape(title)}</text>{content}</svg>\n'
+    )
+
+
+def _eda_markdown(profile: EDAProfile) -> str:
+    char_stats = profile.character_lengths
+    token_stats = profile.token_lengths
+    char_summary = (
+        f"p50={char_stats.p50}, p95={char_stats.p95}, p99={char_stats.p99}, max={char_stats.maximum}"
+        if char_stats
+        else "no records"
+    )
+    token_summary = (
+        f"p50={token_stats.p50}, p95={token_stats.p95}, p99={token_stats.p99}, max={token_stats.maximum}"
+        if token_stats
+        else "no records"
+    )
+    missing = "\n".join(f"- `{field}`: {count}" for field, count in sorted(profile.missing_fields.items()))
+    noise = "\n".join(f"- `{category}`: {count}" for category, count in sorted(profile.noise_categories.items()))
+    languages = "\n".join(f"- `{language}`: {count}" for language, count in sorted(profile.languages.items()))
+    return f"""# Development EDA
+
+- Dataset SHA-256: `{profile.dataset_sha256}`
+- Records: {profile.records}
+- Unique normalized texts: {profile.unique_texts}
+- Repeated records after the first occurrence: {profile.duplicate_texts}
+- Duplicate groups: {profile.duplicate_groups}
+- Unique authors: {profile.unique_authors}
+- Unique videos: {profile.unique_videos}
+- Unique channels: {profile.unique_channels}
+- Unique queries: {profile.unique_queries}
+- Character lengths: {char_summary}
+- Word-token lengths: {token_summary}
+
+## Missing fields
+
+{missing or '- None.'}
+
+## Noise signals
+
+Categories overlap and are diagnostic; they are not removal counts.
+
+{noise or '- None.'}
+
+## Language sample
+
+Lingua was run on a deterministic sample of {profile.language_sample_records} records with seed
+{profile.config.language_seed}. No language was removed during EDA.
+
+{languages or '- Disabled.'}
+
+## Cleaning candidates for the next stage
+
+- Start calibration at `min_length=20`; compare retained coverage against the length tables before changing it.
+- Remove normalized exact duplicates during cleaning, while keeping this report as the pre-cleaning baseline.
+- Review acknowledgement and pipeline-noise counts separately because these categories can overlap.
+- Do not enable language filtering until a manually labelled development sample validates Lingua errors.
+- Use the p99 word-token length only as a diagnostic; embedding limits use model subword tokens and require a
+  later check.
+
+All group labels in the machine-readable profile are SHA-256 values. Reports contain no comment text, author names,
+channel names, queries, or raw video identifiers.
+"""
+
+
+def write_eda_reports(profile: EDAProfile, report_dir: Path, *, force: bool = False) -> list[Path]:
+    """Persist JSON, Markdown, aggregate CSV, and SVG artifacts without raw values."""
+    tables_dir = report_dir / "aggregate-tables"
+    figures_dir = report_dir / "figures"
+    paths = [
+        report_dir / "development-profile.json",
+        report_dir / "development-profile.md",
+        tables_dir / "character-lengths.csv",
+        tables_dir / "duplicate-groups.csv",
+        tables_dir / "languages.csv",
+        tables_dir / "monthly-records.csv",
+        tables_dir / "noise-categories.csv",
+        figures_dir / "character-lengths.svg",
+        figures_dir / "duplicate-groups.svg",
+        figures_dir / "languages.svg",
+        figures_dir / "monthly-records.svg",
+        figures_dir / "noise-categories.svg",
+    ]
+    existing = next((path for path in paths if path.exists()), None)
+    if existing is not None and not force:
+        msg = f"refusing to overwrite existing EDA artifact: {existing}"
+        raise FileExistsError(msg)
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    paths[0].write_text(f"{profile.model_dump_json(indent=2)}\n", encoding="utf-8")
+    paths[1].write_text(_eda_markdown(profile), encoding="utf-8")
+    aggregates = (
+        (paths[2], "length", profile.character_length_buckets, "Character lengths", paths[7]),
+        (paths[3], "group_size", profile.duplicate_group_size_buckets, "Exact duplicate group sizes", paths[8]),
+        (paths[4], "language", profile.languages, "Language sample", paths[9]),
+        (paths[5], "month", profile.monthly_records, "Comments by month", paths[10]),
+        (paths[6], "category", profile.noise_categories, "Noise signals", paths[11]),
+    )
+    for csv_path, label, values, title, svg_path in aggregates:
+        _write_counter_csv(csv_path, label, values)
+        svg_path.write_text(_bar_chart_svg(title, values), encoding="utf-8")
+    return paths

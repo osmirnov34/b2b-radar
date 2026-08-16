@@ -11,6 +11,15 @@ from src.analysis.config import (
     save_analysis_config,
 )
 from src.analysis.dataset import SampleMetadata, create_research_sample, write_inspection_reports
+from src.analysis.eda import (
+    EDAConfig,
+    EDAProfile,
+    HashedGroupCount,
+    NumericSummary,
+    profile_development_dataset,
+    summarize_numbers,
+    write_eda_reports,
+)
 from src.analysis.inspection import (
     DatasetFormat,
     DatasetInspection,
@@ -78,10 +87,14 @@ __all__ = [
     "DeduplicationStats",
     "DuplicateGroup",
     "DuplicatePair",
+    "EDAConfig",
+    "EDAProfile",
     "EmbeddingConfig",
     "ExportedComment",
     "FormatInspection",
+    "HashedGroupCount",
     "InspectionError",
+    "NumericSummary",
     "SampleMetadata",
     "SplitAssignment",
     "SplitConfig",
@@ -98,8 +111,11 @@ __all__ = [
     "is_informative_leakage_text",
     "load_analysis_config",
     "normalize_leakage_text",
+    "profile_development_dataset",
     "save_analysis_config",
     "split_comments_jsonl",
+    "summarize_numbers",
+    "write_eda_reports",
     "write_inspection_reports",
     "write_split_markdown",
 ]

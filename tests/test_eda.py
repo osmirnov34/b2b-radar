@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from src.analysis.eda import EDAConfig, profile_development_dataset, summarize_numbers
+from scripts.run_eda import main
+from src.analysis.eda import EDAConfig, profile_development_dataset, summarize_numbers, write_eda_reports
 from src.analysis.splitting import SplitConfig, SplitName, split_comments_jsonl
 
 
@@ -78,3 +79,39 @@ def test_profile_rejects_non_development_checksum(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="checksum"):
         profile_development_dataset(development, manifest, config=EDAConfig(language_sample_size=0))
+
+
+def test_reports_are_complete_and_do_not_contain_raw_values(tmp_path: Path) -> None:
+    development, manifest = _make_development_split(tmp_path)
+    profile = profile_development_dataset(development, manifest, config=EDAConfig(language_sample_size=0))
+
+    paths = write_eda_reports(profile, tmp_path / "reports")
+
+    assert len(paths) == 12
+    combined = "".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "private-channel" not in combined
+    assert "private-query" not in combined
+    assert "Не могу настроить" not in combined
+    assert "<svg" in (tmp_path / "reports" / "figures" / "character-lengths.svg").read_text(encoding="utf-8")
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        write_eda_reports(profile, tmp_path / "reports")
+
+
+def test_eda_cli_profiles_only_manifest_development(tmp_path: Path) -> None:
+    development, manifest = _make_development_split(tmp_path)
+    report_dir = tmp_path / "reports"
+
+    exit_code = main(
+        [
+            str(development),
+            "--manifest",
+            str(manifest),
+            "--report-dir",
+            str(report_dir),
+            "--language-sample-size",
+            "0",
+        ],
+    )
+
+    assert exit_code == 0
+    assert (report_dir / "development-profile.json").is_file()
