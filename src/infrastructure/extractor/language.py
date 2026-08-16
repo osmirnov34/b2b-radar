@@ -41,3 +41,12 @@ def is_probably_russian(*parts: str | None, min_chars: int = _MIN_CHARS_FOR_DETE
     if len(text) < min_chars:
         return True
     return _detector().detect_language_of(text) == Language.RUSSIAN
+
+
+def detect_language(text: str, *, min_chars: int = _MIN_CHARS_FOR_DETECTION) -> str:
+    """Return a stable language label without using the result as a filtering decision."""
+    stripped = text.strip()
+    if len(stripped) < min_chars:
+        return "unknown_short"
+    language = _detector().detect_language_of(stripped)
+    return language.name.lower() if language is not None else "unknown"
