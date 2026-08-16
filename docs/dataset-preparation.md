@@ -89,7 +89,47 @@ The adjacent `.meta.json` records source/output checksums, seed, requested/writt
 records are skipped. If the cap prevents reaching the requested count, `written_records` explicitly reports the smaller
 result.
 
-## 4. Blocking conditions
+## 4. Split the corpus
+
+Run this only after the complete file passes inspection. The default split is 70% development, 15% validation, and
+15% test. A stable SHA-256 assignment keeps every `video_id` in exactly one partition and produces the same result for
+the same seed regardless of input row order. When `video_id` is absent, the fallback order is video URL,
+channel + title, comment ID, then a hash of the canonical record.
+
+```bash
+uv run python scripts/split_dataset.py data/raw/comments.jsonl \
+  --output-dir data/interim/splits \
+  --development-ratio 0.70 \
+  --validation-ratio 0.15 \
+  --test-ratio 0.15 \
+  --seed 42
+```
+
+Generated files:
+
+```text
+data/interim/splits/development.jsonl
+data/interim/splits/validation.jsonl
+data/interim/splits/test.jsonl
+data/interim/splits/split-manifest.json
+data/interim/splits/split-report.md
+```
+
+The split is group-safe first. It then audits normalized exact text with ownership priority
+`development > validation > test`. A sufficiently informative duplicate already owned by a higher-priority partition
+is omitted from the lower-priority output. Short generic phrases such as acknowledgements are retained and counted as
+ignored noise overlaps; they never connect unrelated videos. Semantic near-duplicates are deliberately deferred until
+the embedding/ANN stage.
+
+The manifest contains checksums, hashed group assignments, parameters, counts, and leakage statistics. It contains no
+comment text or raw video identifiers. The command refuses to overwrite an existing split unless `--force` is passed.
+Large deviations from the target ratios are shown in `split-report.md`; this can occur when a few videos dominate the
+record count and must be reviewed before model evaluation.
+
+Notebook exploration and tuning must use only `development.jsonl`. Use `validation.jsonl` for model/parameter
+selection and open `test.jsonl` only for the final evaluation.
+
+## 5. Blocking conditions
 
 The dataset is blocked when:
 

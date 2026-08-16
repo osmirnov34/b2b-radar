@@ -3,7 +3,7 @@
 This directory is intentionally excluded from Git except for this guide.
 
 - `raw/` — immutable downloaded source files.
-- `interim/` — normalized or converted intermediate files.
+- `interim/` — reproducible development/validation/test splits and other intermediate files.
 - `processed/` — cleaned datasets.
 - `samples/` — deterministic research subsets and metadata.
 - `reports/` — dataset profiles and sanitized validation errors.

@@ -42,6 +42,17 @@ from src.analysis.schemas import (
     ClusterRecord,
     ExportedComment,
 )
+from src.analysis.splitting import (
+    DatasetSplitManifest,
+    SplitAssignment,
+    SplitConfig,
+    SplitName,
+    SplitStats,
+    is_informative_leakage_text,
+    normalize_leakage_text,
+    split_comments_jsonl,
+    write_split_markdown,
+)
 
 __all__ = [
     "ANALYSIS_SCHEMA_VERSION",
@@ -61,6 +72,7 @@ __all__ = [
     "CommentRecord",
     "DatasetFormat",
     "DatasetInspection",
+    "DatasetSplitManifest",
     "DeduplicationConfig",
     "DeduplicationResult",
     "DeduplicationStats",
@@ -71,6 +83,10 @@ __all__ = [
     "FormatInspection",
     "InspectionError",
     "SampleMetadata",
+    "SplitAssignment",
+    "SplitConfig",
+    "SplitName",
+    "SplitStats",
     "TextLengthStats",
     "TopicAssignment",
     "TopicSummary",
@@ -79,7 +95,11 @@ __all__ = [
     "create_research_sample",
     "detect_dataset_format",
     "inspect_comments_jsonl",
+    "is_informative_leakage_text",
     "load_analysis_config",
+    "normalize_leakage_text",
     "save_analysis_config",
+    "split_comments_jsonl",
     "write_inspection_reports",
+    "write_split_markdown",
 ]

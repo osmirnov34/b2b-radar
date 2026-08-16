@@ -76,7 +76,7 @@ Typed runtime parameters and notebook usage are documented in
 [`configs/topic-analysis.example.json`](configs/topic-analysis.example.json).
 The separation between persisted contracts and internal analysis objects is described in
 [`docs/analysis-models.md`](docs/analysis-models.md).
-Instructions for validating the full corpus and creating a safe research sample are in
+Instructions for validating, sampling, and splitting the full corpus without source-group leakage are in
 [`docs/dataset-preparation.md`](docs/dataset-preparation.md).
 
 ### Deployment (Caddy + HTTP Basic Auth)

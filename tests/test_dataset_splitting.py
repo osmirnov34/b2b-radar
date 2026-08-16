@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from src.analysis.splitting import SplitConfig, SplitName, is_informative_leakage_text, split_comments_jsonl
+from scripts.split_dataset import main
+from src.analysis.splitting import (
+    DatasetSplitManifest,
+    SplitConfig,
+    SplitName,
+    is_informative_leakage_text,
+    split_comments_jsonl,
+)
 
 
 def _write_rows(path: Path, rows: list[dict[str, str]]) -> None:
@@ -105,3 +112,30 @@ def test_informative_leakage_thresholds_ignore_generic_phrases() -> None:
     assert not is_informative_leakage_text("Спасибо", config)
     assert not is_informative_leakage_text("Очень круто!", config)
     assert is_informative_leakage_text("Не могу настроить интеграцию с CRM", config)
+
+
+def test_split_cli_writes_manifest_and_privacy_safe_report(tmp_path: Path) -> None:
+    source = tmp_path / "comments.jsonl"
+    private_text = "Private detailed customer problem with integration setup"
+    _write_rows(source, [{"comment_text": private_text, "video_id": "private-video-id"}])
+    output = tmp_path / "splits"
+
+    exit_code = main([str(source), "--output-dir", str(output)])
+
+    assert exit_code == 0
+    manifest_text = (output / "split-manifest.json").read_text(encoding="utf-8")
+    report_text = (output / "split-report.md").read_text(encoding="utf-8")
+    manifest = DatasetSplitManifest.model_validate_json(manifest_text)
+    assert manifest.stats.input_records == 1
+    assert private_text not in manifest_text + report_text
+    assert "private-video-id" not in manifest_text + report_text
+
+
+def test_split_cli_returns_error_for_existing_outputs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = tmp_path / "comments.jsonl"
+    _write_rows(source, [{"comment_text": "Detailed useful comment for splitting", "video_id": "video"}])
+    output = tmp_path / "splits"
+    assert main([str(source), "--output-dir", str(output)]) == 0
+
+    assert main([str(source), "--output-dir", str(output)]) == 1
+    assert "refusing to overwrite" in capsys.readouterr().err

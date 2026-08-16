@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 _RATIO_TOLERANCE = 1e-9
 _MAX_ACKNOWLEDGEMENT_TOKENS = 3
+_BALANCE_WARNING_DEVIATION = 0.05
 
 
 class _HashUpdater(Protocol):
@@ -65,10 +66,28 @@ class SplitAssignment(_SplitModel):
 class SplitStats(_SplitModel):
     input_records: int = Field(ge=0)
     input_groups: int = Field(ge=0)
+    assigned_records: dict[SplitName, int]
     written_records: dict[SplitName, int]
     group_counts: dict[SplitName, int]
     removed_content_leaks: dict[SplitName, int]
     ignored_noise_overlaps: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> SplitStats:
+        if sum(self.assigned_records.values()) != self.input_records:
+            msg = "assigned record counts must add up to input_records"
+            raise ValueError(msg)
+        if sum(self.group_counts.values()) != self.input_groups:
+            msg = "group counts must add up to input_groups"
+            raise ValueError(msg)
+        for split in SplitName:
+            assigned = self.assigned_records.get(split, 0)
+            written = self.written_records.get(split, 0)
+            removed = self.removed_content_leaks.get(split, 0)
+            if written + removed != assigned:
+                msg = f"written and removed counts for {split.value} must add up to assigned records"
+                raise ValueError(msg)
+        return self
 
 
 class DatasetSplitManifest(_SplitModel):
@@ -98,7 +117,7 @@ def is_informative_leakage_text(text: str, config: SplitConfig) -> bool:
     )
 
 
-def _group_key(comment: ExportedComment, line_number: int) -> str:
+def _group_key(comment: ExportedComment) -> str:
     if comment.video_id.strip():
         return f"video_id:{comment.video_id.strip()}"
     if comment.video_url.strip():
@@ -108,7 +127,8 @@ def _group_key(comment: ExportedComment, line_number: int) -> str:
         return f"channel_title:{channel_title}"
     if comment.comment_id.strip():
         return f"comment_id:{comment.comment_id.strip()}"
-    return f"line:{line_number}"
+    canonical = comment.model_dump_json(exclude_none=False)
+    return f"record_sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
 
 
 def _assign_group(group_key: str, config: SplitConfig) -> SplitName:
@@ -163,8 +183,8 @@ def _write_split_files(
     try:
         handles = {name: path.open("wb") for name, path in temporary.items()}
         with source_path.open("rb") as source:
-            for line_number, raw_line, comment in _iter_comments(source):
-                split = assignments[_group_key(comment, line_number)]
+            for _, raw_line, comment in _iter_comments(source):
+                split = assignments[_group_key(comment)]
                 if is_informative_leakage_text(comment.comment_text, config):
                     digest = _text_digest(comment.comment_text)
                     if digest not in owned_content[split]:
@@ -206,15 +226,15 @@ def split_comments_jsonl(
     source_hash = hashlib.sha256()
     group_sizes: Counter[str] = Counter()
     with source_path.open("rb") as source:
-        for line_number, _, comment in _iter_comments(source, source_hash=source_hash):
-            group_sizes[_group_key(comment, line_number)] += 1
+        for _, _, comment in _iter_comments(source, source_hash=source_hash):
+            group_sizes[_group_key(comment)] += 1
 
     assignments = {group: _assign_group(group, active_config) for group in group_sizes}
     content_hashes: dict[SplitName, set[bytes]] = {name: set() for name in SplitName}
     noise_splits: dict[bytes, set[SplitName]] = {}
     with source_path.open("rb") as source:
-        for line_number, _, comment in _iter_comments(source):
-            split = assignments[_group_key(comment, line_number)]
+        for _, _, comment in _iter_comments(source):
+            split = assignments[_group_key(comment)]
             digest = _text_digest(comment.comment_text)
             if is_informative_leakage_text(comment.comment_text, active_config):
                 content_hashes[split].add(digest)
@@ -229,6 +249,9 @@ def split_comments_jsonl(
         - content_hashes[SplitName.VALIDATION],
     }
     group_counts = Counter(assignments.values())
+    assigned_records: Counter[SplitName] = Counter(dict.fromkeys(SplitName, 0))
+    for group, records in group_sizes.items():
+        assigned_records[assignments[group]] += records
     ignored_noise_overlaps = sum(1 for splits in noise_splits.values() if len(splits) > 1)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -259,6 +282,7 @@ def split_comments_jsonl(
         stats=SplitStats(
             input_records=sum(group_sizes.values()),
             input_groups=len(group_sizes),
+            assigned_records=dict(assigned_records),
             written_records=dict(written),
             group_counts=dict(group_counts),
             removed_content_leaks=dict(removed),
@@ -269,3 +293,52 @@ def split_comments_jsonl(
     )
     manifest_path.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
     return manifest
+
+
+def write_split_markdown(manifest: DatasetSplitManifest, output_dir: Path) -> Path:
+    """Write a privacy-safe, human-readable split summary."""
+    stats = manifest.stats
+    targets = {
+        SplitName.DEVELOPMENT: manifest.config.development_ratio,
+        SplitName.VALIDATION: manifest.config.validation_ratio,
+        SplitName.TEST: manifest.config.test_ratio,
+    }
+    rows: list[str] = []
+    warnings: list[str] = []
+    for split in SplitName:
+        assigned = stats.assigned_records.get(split, 0)
+        actual_ratio = assigned / stats.input_records if stats.input_records else 0.0
+        deviation = actual_ratio - targets[split]
+        rows.append(
+            f"| {split.value} | {targets[split]:.1%} | {assigned} | {actual_ratio:.1%} | "
+            f"{stats.written_records.get(split, 0)} | {stats.removed_content_leaks.get(split, 0)} |",
+        )
+        if abs(deviation) > _BALANCE_WARNING_DEVIATION:
+            warnings.append(
+                f"- `{split.value}` differs from its target by {deviation:+.1%}; inspect dominant source groups.",
+            )
+    warning_text = "\n".join(warnings) or "- None."
+    table = "\n".join(rows)
+    report = f"""# Dataset split
+
+- Source SHA-256: `{manifest.source_sha256}`
+- Input records: {stats.input_records}
+- Source groups: {stats.input_groups}
+- Seed: {manifest.config.seed}
+- Ignored noise overlaps: {stats.ignored_noise_overlaps}
+
+| Split | Target | Assigned records | Actual before leakage removal | Written records | Removed content leaks |
+|---|---:|---:|---:|---:|---:|
+{table}
+
+## Balance warnings
+
+{warning_text}
+
+Comments from one source group never cross partitions. Exact normalized content is owned in priority order
+`development`, `validation`, `test`; short generic overlaps are reported but retained. Semantic leakage is deferred
+until embeddings and approximate-nearest-neighbour search are available.
+"""
+    path = output_dir / "split-report.md"
+    path.write_text(report, encoding="utf-8")
+    return path
