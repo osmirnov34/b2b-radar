@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Create deterministic development, validation, and test comment datasets."""
 
+# ruff: noqa: E402, T201 -- standalone CLI configures the project path and writes status to stdio.
+
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
-from pydantic import ValidationError
 
 from src.analysis import SplitConfig, SplitName, split_comments_jsonl, write_split_markdown
 
@@ -48,7 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         manifest = split_comments_jsonl(args.path, args.output_dir, config=config, force=args.force)
         report_path = write_split_markdown(manifest, args.output_dir)
-    except (FileExistsError, OSError, ValueError, ValidationError) as exc:
+    except (FileExistsError, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
