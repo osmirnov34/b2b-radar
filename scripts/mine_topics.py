@@ -17,7 +17,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 from collections import Counter
 from datetime import UTC, datetime
@@ -32,6 +31,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.analysis.cleaning import THANKS_TOKENS
+from src.analysis.cleaning import clean as clean_comments
 from src.analysis.config import (
     AnalysisConfig,
     CleaningConfig,
@@ -41,7 +42,6 @@ from src.analysis.config import (
 )
 from src.analysis.models import CommentRecord
 from src.analysis.schemas import ANALYSIS_SCHEMA_VERSION, ClusterComment, ClusterRecord, ExportedComment
-from src.infrastructure.extractor.noise import is_noise as is_pipeline_noise
 
 if TYPE_CHECKING:
     import numpy as np
@@ -53,12 +53,6 @@ def limit_threads(n_threads: int) -> None:
         os.environ.setdefault(var, str(n_threads))
 
 
-# Short acknowledgements that form dense but useless clusters (valid Russian, so gates let them through).
-THANKS_TOKENS = {
-    "спс", "спасибо", "благодарю", "класс", "супер", "круто", "лайк",
-    "огонь", "топ", "красота", "молодец", "молодцы", "здорово", "отлично", "браво",
-}
-
 # Russian stopwords for c-TF-IDF keyword extraction (sklearn ships none).
 # stopwordsiso ru = 559 words, bundled with the package (no runtime download, unlike NLTK).
 # Fold in THANKS_TOKENS so bare acknowledgements never surface as cluster keywords.
@@ -66,10 +60,6 @@ def _russian_stopwords() -> list[str]:
     import stopwordsiso
 
     return sorted(stopwordsiso.stopwords("ru") | THANKS_TOKENS)
-
-WORD_RE = re.compile(r"[а-яёa-z]+", re.IGNORECASE)
-CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
-LATIN_RE = re.compile(r"[a-z]", re.IGNORECASE)
 
 
 def load_comments(path: Path) -> list[CommentRecord]:
@@ -84,43 +74,6 @@ def load_comments(path: Path) -> list[CommentRecord]:
             if comment.text:
                 rows.append(comment)
     return rows
-
-
-def is_noise(text: str, min_length: int) -> bool:
-    """Drop too-short comments, bare thanks/emoji, and predominantly non-Russian text."""
-    stripped = text.strip()
-    if len(stripped) < min_length:
-        return True
-    words = WORD_RE.findall(stripped.lower())
-    if not words:
-        return True
-    if len(words) <= 3 and all(w in THANKS_TOKENS for w in words):
-        return True
-    n_cyr = len(CYRILLIC_RE.findall(stripped))
-    n_lat = len(LATIN_RE.findall(stripped))
-    return n_cyr + n_lat > 0 and n_cyr / (n_cyr + n_lat) < 0.5
-
-
-def clean(rows: list[CommentRecord], min_length: int, spam_filter: bool = False) -> list[CommentRecord]:
-    """Filter noise and drop exact-duplicate texts (near-dup handled later on embeddings).
-
-    With spam_filter=True, additionally apply the pipeline's cheap noise heuristics —
-    drops glued gibberish and emoji/symbol spam before embedding.
-    Off by default so the calibrated runs in the methodology (§9) stay reproducible.
-    """
-    seen: set[str] = set()
-    kept: list[CommentRecord] = []
-    for row in rows:
-        if is_noise(row.text, min_length):
-            continue
-        if spam_filter and is_pipeline_noise(row.text):
-            continue
-        key = row.normalized_text_key
-        if key in seen:
-            continue
-        seen.add(key)
-        kept.append(row)
-    return kept
 
 
 def clustering_prefix(model_name: str) -> str:
@@ -423,7 +376,8 @@ def main() -> None:
             f"Sampled {len(rows)} random comments (--sample, seed={config.clustering.random_seed}).",
             file=sys.stderr,
         )
-    kept = clean(rows, config.cleaning.min_length, spam_filter=config.cleaning.spam_filter)
+    cleaning_result = clean_comments(rows, config.cleaning.min_length, spam_filter=config.cleaning.spam_filter)
+    kept = cleaning_result.comments
     gate = " (+spam-filter)" if config.cleaning.spam_filter else ""
     print(f"Loaded {len(rows)} comments; kept {len(kept)} after cleaning{gate}.", file=sys.stderr)
 
