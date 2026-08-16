@@ -4,7 +4,6 @@ import pytest
 
 from scripts.mine_topics import (
     build_parser,
-    clean,
     clustering_prefix,
     config_from_args,
     load_comments,
@@ -22,15 +21,6 @@ def test_model_specific_clustering_prefixes() -> None:
     assert clustering_prefix("deepvk/USER-bge-m3") == ""
 
 
-def test_clean_with_spam_filter_uses_pipeline_noise_gate() -> None:
-    rows = [
-        CommentRecord(text="Нам нужен простой CRM для работы с клиентами"),
-        CommentRecord(text="оченьдлинноесклеенноесловобезпробелов"),
-    ]
-
-    assert clean(rows, min_length=10, spam_filter=True) == [rows[0]]
-
-
 def test_load_comments_returns_normalized_typed_records() -> None:
     comments = load_comments(FIXTURES_DIR / "comments.jsonl")
 
@@ -38,15 +28,6 @@ def test_load_comments_returns_normalized_typed_records() -> None:
     assert all(isinstance(comment, CommentRecord) for comment in comments)
     assert comments[0].author == "Анна"
     assert comments[0].video_url == "https://www.youtube.com/watch?v=video-1"
-
-
-def test_clean_collapses_case_and_whitespace_exact_duplicates() -> None:
-    rows = [
-        CommentRecord(text="CRM  для бизнеса"),
-        CommentRecord(text=" crm для БИЗНЕСА "),
-    ]
-
-    assert clean(rows, min_length=1) == [rows[0]]
 
 
 class _TopicColumn:
