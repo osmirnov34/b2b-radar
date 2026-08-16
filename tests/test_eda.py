@@ -65,9 +65,16 @@ def test_profile_development_computes_safe_aggregates(tmp_path: Path) -> None:
     assert profile.duplicate_texts == 1
     assert profile.duplicate_groups == 1
     assert profile.unique_authors == 2
+    assert profile.records_per_author is not None
+    assert profile.records_per_author.maximum == 2
+    assert profile.records_per_video is not None
+    assert profile.records_per_video.maximum == 4
     assert profile.noise_categories["acknowledgement"] == 1
     assert profile.noise_categories["contains_url"] == 1
     assert profile.monthly_records == {"2026-01": 4}
+    assert profile.published_at_min is not None
+    assert profile.published_at_max is not None
+    assert profile.split_written_records[SplitName.DEVELOPMENT] == 4
     assert "private-channel" not in serialized
     assert "private-query" not in serialized
     assert "Не могу настроить" not in serialized
@@ -87,7 +94,7 @@ def test_reports_are_complete_and_do_not_contain_raw_values(tmp_path: Path) -> N
 
     paths = write_eda_reports(profile, tmp_path / "reports")
 
-    assert len(paths) == 12
+    assert len(paths) == 18
     combined = "".join(path.read_text(encoding="utf-8") for path in paths)
     assert "private-channel" not in combined
     assert "private-query" not in combined
@@ -110,8 +117,13 @@ def test_eda_cli_profiles_only_manifest_development(tmp_path: Path) -> None:
             str(report_dir),
             "--language-sample-size",
             "0",
+            "--sample-size",
+            "2",
+            "--sample-output",
+            str(tmp_path / "development-sample.jsonl"),
         ],
     )
 
     assert exit_code == 0
     assert (report_dir / "development-profile.json").is_file()
+    assert (tmp_path / "development-sample.jsonl").is_file()

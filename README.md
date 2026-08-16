@@ -78,6 +78,7 @@ The separation between persisted contracts and internal analysis objects is desc
 [`docs/analysis-models.md`](docs/analysis-models.md).
 Instructions for validating, sampling, and splitting the full corpus without source-group leakage are in
 [`docs/dataset-preparation.md`](docs/dataset-preparation.md).
+The same guide covers privacy-safe development EDA and the thin notebook in `notebooks/01_development_eda.ipynb`.
 
 ### Deployment (Caddy + HTTP Basic Auth)
 

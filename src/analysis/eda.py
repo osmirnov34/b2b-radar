@@ -76,12 +76,21 @@ class EDAProfile(_EDAModel):
     missing_fields: dict[str, int]
     character_lengths: NumericSummary | None = None
     token_lengths: NumericSummary | None = None
+    records_per_author: NumericSummary | None = None
+    records_per_video: NumericSummary | None = None
+    records_per_channel: NumericSummary | None = None
+    records_per_query: NumericSummary | None = None
     character_length_buckets: dict[str, int]
     duplicate_group_size_buckets: dict[str, int]
     noise_categories: dict[str, int]
     languages: dict[str, int]
     language_sample_records: int = Field(ge=0)
+    published_at_min: datetime | None = None
+    published_at_max: datetime | None = None
     monthly_records: dict[str, int]
+    split_target_ratios: dict[SplitName, float]
+    split_assigned_records: dict[SplitName, int]
+    split_written_records: dict[SplitName, int]
     top_video_groups: list[HashedGroupCount]
     top_channel_groups: list[HashedGroupCount]
     top_query_groups: list[HashedGroupCount]
@@ -181,7 +190,7 @@ def profile_development_dataset(
     manifest = _load_development_manifest(manifest_path, dataset_path)
     expected_records = manifest.stats.written_records.get(SplitName.DEVELOPMENT, 0)
     text_counts: Counter[str] = Counter()
-    authors: set[str] = set()
+    authors: Counter[str] = Counter()
     videos: Counter[str] = Counter()
     channels: Counter[str] = Counter()
     queries: Counter[str] = Counter()
@@ -194,6 +203,7 @@ def profile_development_dataset(
     language_heap: list[tuple[int, str]] = []
     records = 0
     profile_hash = hashlib.sha256()
+    published_dates: list[datetime] = []
 
     with dataset_path.open("rb") as source:
         for line_number, raw_line in enumerate(source, start=1):
@@ -246,7 +256,7 @@ def profile_development_dataset(
                 if value is None or (isinstance(value, str) and not value.strip()):
                     missing[field] += 1
             if comment.comment_author:
-                authors.add(comment.comment_author)
+                authors[comment.comment_author] += 1
             if comment.video_id:
                 videos[comment.video_id] += 1
             if comment.video_channel:
@@ -254,6 +264,7 @@ def profile_development_dataset(
             if comment.search_query:
                 queries[comment.search_query] += 1
             if comment.comment_published_at is not None:
+                published_dates.append(comment.comment_published_at)
                 months[comment.comment_published_at.strftime("%Y-%m")] += 1
 
     if records != expected_records:
@@ -283,12 +294,25 @@ def profile_development_dataset(
         missing_fields=dict(missing),
         character_lengths=summarize_numbers(char_lengths),
         token_lengths=summarize_numbers(token_lengths),
+        records_per_author=summarize_numbers(list(authors.values())),
+        records_per_video=summarize_numbers(list(videos.values())),
+        records_per_channel=summarize_numbers(list(channels.values())),
+        records_per_query=summarize_numbers(list(queries.values())),
         character_length_buckets=dict(char_buckets),
         duplicate_group_size_buckets=dict(duplicate_buckets),
         noise_categories=dict(noise),
         languages=dict(languages),
         language_sample_records=len(language_heap),
+        published_at_min=min(published_dates, default=None),
+        published_at_max=max(published_dates, default=None),
         monthly_records=dict(sorted(months.items())),
+        split_target_ratios={
+            SplitName.DEVELOPMENT: manifest.config.development_ratio,
+            SplitName.VALIDATION: manifest.config.validation_ratio,
+            SplitName.TEST: manifest.config.test_ratio,
+        },
+        split_assigned_records=manifest.stats.assigned_records,
+        split_written_records=manifest.stats.written_records,
         top_video_groups=_hashed_top(videos, active_config.top_groups),
         top_channel_groups=_hashed_top(channels, active_config.top_groups),
         top_query_groups=_hashed_top(queries, active_config.top_groups),
@@ -344,6 +368,11 @@ def _eda_markdown(profile: EDAProfile) -> str:
     missing = "\n".join(f"- `{field}`: {count}" for field, count in sorted(profile.missing_fields.items()))
     noise = "\n".join(f"- `{category}`: {count}" for category, count in sorted(profile.noise_categories.items()))
     languages = "\n".join(f"- `{language}`: {count}" for language, count in sorted(profile.languages.items()))
+    split_rows = "\n".join(
+        f"| {split.value} | {profile.split_target_ratios.get(split, 0):.1%} | "
+        f"{profile.split_assigned_records.get(split, 0)} | {profile.split_written_records.get(split, 0)} |"
+        for split in SplitName
+    )
     return f"""# Development EDA
 
 - Dataset SHA-256: `{profile.dataset_sha256}`
@@ -357,6 +386,7 @@ def _eda_markdown(profile: EDAProfile) -> str:
 - Unique queries: {profile.unique_queries}
 - Character lengths: {char_summary}
 - Word-token lengths: {token_summary}
+- Publication range: {profile.published_at_min or 'unknown'} to {profile.published_at_max or 'unknown'}
 
 ## Missing fields
 
@@ -374,6 +404,12 @@ Lingua was run on a deterministic sample of {profile.language_sample_records} re
 {profile.config.language_seed}. No language was removed during EDA.
 
 {languages or '- Disabled.'}
+
+## Split balance
+
+| Split | Target | Assigned | Written after leakage removal |
+|---|---:|---:|---:|
+{split_rows}
 
 ## Cleaning candidates for the next stage
 
@@ -406,6 +442,12 @@ def write_eda_reports(profile: EDAProfile, report_dir: Path, *, force: bool = Fa
         figures_dir / "languages.svg",
         figures_dir / "monthly-records.svg",
         figures_dir / "noise-categories.svg",
+        tables_dir / "top-video-groups.csv",
+        tables_dir / "top-channel-groups.csv",
+        tables_dir / "top-query-groups.csv",
+        figures_dir / "top-video-groups.svg",
+        figures_dir / "top-channel-groups.svg",
+        figures_dir / "top-query-groups.svg",
     ]
     existing = next((path for path in paths if path.exists()), None)
     if existing is not None and not force:
@@ -425,4 +467,14 @@ def write_eda_reports(profile: EDAProfile, report_dir: Path, *, force: bool = Fa
     for csv_path, label, values, title, svg_path in aggregates:
         _write_counter_csv(csv_path, label, values)
         svg_path.write_text(_bar_chart_svg(title, values), encoding="utf-8")
+    group_aggregates = (
+        (paths[12], profile.top_video_groups, "Top video groups", paths[15]),
+        (paths[13], profile.top_channel_groups, "Top channel groups", paths[16]),
+        (paths[14], profile.top_query_groups, "Top query groups", paths[17]),
+    )
+    for csv_path, groups, title, svg_path in group_aggregates:
+        values = {group.group_sha256: group.records for group in groups}
+        chart_values = {key[:12]: value for key, value in values.items()}
+        _write_counter_csv(csv_path, "group_sha256", values)
+        svg_path.write_text(_bar_chart_svg(title, chart_values), encoding="utf-8")
     return paths

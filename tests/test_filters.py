@@ -1,9 +1,14 @@
-from src.infrastructure.extractor.language import is_probably_russian
+from src.infrastructure.extractor.language import detect_language, is_probably_russian
 from src.infrastructure.extractor.noise import is_noise
 
 
 def test_short_text_is_kept_when_language_is_uncertain() -> None:
     assert is_probably_russian("Короткое название")
+
+
+def test_language_detection_returns_stable_labels() -> None:
+    assert detect_language("Нам нужна простая система для работы с клиентами") == "russian"
+    assert detect_language("short") == "unknown_short"
 
 
 def test_russian_text_is_kept() -> None:

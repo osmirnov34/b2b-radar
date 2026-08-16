@@ -129,7 +129,44 @@ record count and must be reviewed before model evaluation.
 Notebook exploration and tuning must use only `development.jsonl`. Use `validation.jsonl` for model/parameter
 selection and open `test.jsonl` only for the final evaluation.
 
-## 5. Blocking conditions
+## 5. Run development EDA
+
+The EDA command verifies the development checksum and record count against the split manifest before profiling. All
+corpus-wide metrics are streamed; Lingua runs on a deterministic bounded sample because full language detection is the
+expensive part. No language is filtered at this stage.
+
+```bash
+uv run python scripts/run_eda.py \
+  data/interim/splits/development.jsonl \
+  --manifest data/interim/splits/split-manifest.json \
+  --report-dir data/reports/eda \
+  --language-sample-size 20000 \
+  --language-seed 42
+```
+
+Add a local, development-only notebook sample when needed:
+
+```bash
+uv run python scripts/run_eda.py \
+  data/interim/splits/development.jsonl \
+  --manifest data/interim/splits/split-manifest.json \
+  --report-dir data/reports/eda \
+  --sample-size 20000 \
+  --sample-output data/samples/development-eda.jsonl \
+  --sample-seed 42 \
+  --max-per-video 100
+```
+
+Outputs include `development-profile.json`, a Markdown summary, aggregate CSV tables, and SVG charts for text length,
+duplicate groups, language estimates, time, and noise signals. Group labels are hashed. Raw texts, authors, channel
+names, queries, and video IDs are never written to EDA reports. The optional local sample does contain comments and is
+therefore ignored by Git.
+
+Open `notebooks/01_development_eda.ipynb` for a thin presentation of the safe profile. The notebook intentionally does
+not display raw comments, validation, or test data. Re-run the CLI after changing the source split; checksum validation
+prevents stale or substituted data from being analysed silently.
+
+## 6. Blocking conditions
 
 The dataset is blocked when:
 
