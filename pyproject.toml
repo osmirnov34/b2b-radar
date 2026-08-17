@@ -31,6 +31,7 @@ dev = [
 # Offline pain-mining analysis (embeddings + topic clustering). Heavy ML stack
 analysis = [
     "bertopic>=0.16",
+    "hdbscan>=0.8.40",
     "hnswlib>=0.8.0",
     "numpy>=1.26",
     "sentence-transformers>=3.0",
@@ -77,6 +78,7 @@ ignore = [
 "src/ml/embeddings.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
 "src/ml/corpus.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
 "src/ml/dimensionality_reduction.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
+"src/ml/clustering.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

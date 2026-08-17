@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "dataset_role": "development",
+  "min_cluster_size": 250,
+  "min_samples": null,
+  "metric": "euclidean",
+  "cluster_selection_method": "eom",
+  "cluster_selection_epsilon": 0.0,
+  "alpha": 1.0,
+  "allow_single_cluster": false,
+  "prediction_data": true,
+  "threads": 1,
+  "minimum_probability": 0.5,
+  "dbcv_sample_size": 0,
+  "max_outlier_share_warning": 0.7,
+  "max_dominant_cluster_share_warning": 0.5,
+  "max_micro_cluster_share_warning": 0.5,
+  "min_mean_probability_warning": 0.5,
+  "random_seed": 42
+}
