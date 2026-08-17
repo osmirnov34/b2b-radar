@@ -104,7 +104,7 @@ class CleanedTextUnit(TextUnit):
 
 
 class EmbeddingArtifactManifest(_ContractModel):
-    """Minimum alignment contract consumed by semantic deduplication."""
+    """Alignment and reproducibility contract consumed by semantic deduplication."""
 
     schema_version: int = 1
     records_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -112,7 +112,17 @@ class EmbeddingArtifactManifest(_ContractModel):
     n_records: int = Field(ge=0)
     dimensions: int = Field(ge=1)
     model_name: str = Field(min_length=1)
+    model_revision: str | None = None
     normalized: bool
+    record_ids_path: str | None = None
+    record_ids_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    dtype: str = "float32"
+    device: str = "unknown"
+    batch_size: int | None = Field(default=None, ge=1)
+    max_seq_length: int | None = Field(default=None, ge=1)
+    prompt_prefix: str = ""
+    config_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime | None = None
 
 
 def exported_comment_to_text_units(comment: ExportedComment) -> list[TextUnit]:

@@ -1,4 +1,4 @@
-# Stage 5: semantic deduplication
+# Stage 6: semantic deduplication
 
 This stage groups cleaned text units whose normalized embeddings have cosine similarity at or above a
 model-specific threshold. It replaces the former blockwise all-pairs scan in `scripts/mine_topics.py` with HNSW
@@ -25,14 +25,14 @@ candidate search, avoiding `O(n²)` similarity work on the full corpus.
 
 ## Standalone command
 
-The embedding stage is formalized later, but its minimum manifest contract is already required so a same-sized matrix
-cannot be silently paired with the wrong records.
+Stage 5 generates the matrix and manifest. Their checksums are required so a same-sized matrix cannot be silently
+paired with the wrong records.
 
 ```bash
 uv sync --extra analysis
 uv run python scripts/semantic_deduplicate.py \
   data/processed/cleaning/development-clean.jsonl \
-  data/processed/embeddings/vectors.npy \
+  data/processed/embeddings/embeddings.npy \
   --embedding-manifest data/processed/embeddings/embedding-manifest.json \
   --config configs/semantic-deduplication.example.json \
   --output-dir data/processed/semantic-deduplication

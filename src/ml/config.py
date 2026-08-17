@@ -41,10 +41,16 @@ class CleaningConfig(_ConfigModel):
 
 
 class EmbeddingConfig(_ConfigModel):
+    schema_version: int = 1
     model_name: str = Field(default="intfloat/multilingual-e5-large", min_length=1)
+    model_revision: str | None = None
+    device: Literal["auto", "cpu", "cuda"] = "auto"
     threads: int = Field(default=4, ge=1)
     batch_size: int = Field(default=64, ge=1)
     max_seq_length: int = Field(default=512, ge=8)
+    normalize: bool = True
+    prompt_prefix: str | None = None
+    seed: int = 42
 
     @field_validator("model_name")
     @classmethod
@@ -54,6 +60,14 @@ class EmbeddingConfig(_ConfigModel):
             msg = "model_name cannot be blank"
             raise ValueError(msg)
         return normalized
+
+    @field_validator("model_revision")
+    @classmethod
+    def normalize_revision(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class DeduplicationConfig(_ConfigModel):

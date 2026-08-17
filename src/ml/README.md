@@ -4,8 +4,8 @@ This package owns reproducible, offline processing after comments have been expo
 JSONL plus manifests; it must not call YouTube, open database sessions, import FastAPI, or depend on ingestion
 implementations.
 
-Current stages cover contracts, dataset inspection and splitting, EDA, normalization, and cleaning. Embeddings,
-semantic deduplication, clustering, evaluation, and export are added here as independently testable modules. Large
+Current stages cover contracts, dataset inspection and splitting, EDA, normalization, cleaning, multilingual
+embeddings, and semantic deduplication. Clustering, evaluation, and export are added here as independently testable modules. Large
 vectors and generated data stay under ignored `data/`; persisted metadata uses typed manifests and SHA-256 checksums.
 
 Dependency direction:

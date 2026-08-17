@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "model_name": "intfloat/multilingual-e5-large",
+  "model_revision": null,
+  "device": "auto",
+  "threads": 4,
+  "batch_size": 64,
+  "max_seq_length": 512,
+  "normalize": true,
+  "prompt_prefix": null,
+  "seed": 42
+}
