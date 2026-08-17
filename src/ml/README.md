@@ -5,7 +5,8 @@ JSONL plus manifests; it must not call YouTube, open database sessions, import F
 implementations.
 
 Current stages cover contracts, dataset inspection and splitting, EDA, normalization, cleaning, multilingual
-embeddings, and semantic deduplication. Clustering, evaluation, and export are added here as independently testable modules. Large
+embeddings, semantic deduplication, and final-corpus assembly. Dimensionality reduction, clustering, evaluation, and
+export are added here as independently testable modules. Large
 vectors and generated data stay under ignored `data/`; persisted metadata uses typed manifests and SHA-256 checksums.
 
 Dependency direction:

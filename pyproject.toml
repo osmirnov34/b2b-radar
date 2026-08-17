@@ -74,6 +74,7 @@ ignore = [
 "src/ml/cleaning.py" = ["C901", "PLR0911"]
 "src/ml/semantic_deduplication.py" = ["C901", "PLC0415", "PLR0913"]
 "src/ml/embeddings.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
+"src/ml/corpus.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

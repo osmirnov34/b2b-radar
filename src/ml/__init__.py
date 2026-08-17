@@ -23,6 +23,7 @@ from src.ml.config import (
     load_analysis_config,
     save_analysis_config,
 )
+from src.ml.corpus import CorpusManifest, CorpusRecord, CorpusStats, build_final_corpus
 from src.ml.dataset import SampleMetadata, create_research_sample, write_inspection_reports
 from src.ml.eda import (
     EDAConfig,
@@ -116,6 +117,9 @@ __all__ = [
     "ClusterRecord",
     "ClusteringConfig",
     "CommentRecord",
+    "CorpusManifest",
+    "CorpusRecord",
+    "CorpusStats",
     "DatasetCleaningManifest",
     "DatasetCleaningStats",
     "DatasetFormat",
@@ -153,6 +157,7 @@ __all__ = [
     "TextUnit",
     "TopicAssignment",
     "TopicSummary",
+    "build_final_corpus",
     "classify",
     "classify_prepared_text",
     "clean",
