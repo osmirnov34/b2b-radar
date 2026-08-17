@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src.analysis.schemas import ExportedComment
+from src.ml.schemas import ExportedComment
 
 _FORMAT_SAMPLE_BYTES = 128 * 1024
 _MIN_TABLE_DIMENSION = 2

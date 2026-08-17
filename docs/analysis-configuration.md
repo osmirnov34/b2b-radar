@@ -1,6 +1,6 @@
 # Topic-analysis configuration
 
-Runtime parameters are represented by the immutable Pydantic models in `src/analysis/config.py`. The same models are
+Runtime parameters are represented by the immutable Pydantic models in `src/ml/config.py`. The same models are
 intended for the CLI, notebooks, tests, and future analysis services. Unknown fields are rejected so misspelled
 experiment parameters cannot be silently ignored.
 
@@ -10,8 +10,23 @@ experiment parameters cannot be silently ignored.
 
 | Field | Default | Constraint |
 |---|---:|---|
+| `schema_version` | `1` | Cleaning contract version |
 | `min_length` | `20` | Integer from 0 to 10,000 |
+| `max_length` | `null` | Null or at least 1 and not below `min_length` |
+| `unicode_normalization` | `NFKC` | `NFC` or `NFKC` |
+| `strip_html` | `true` | Decode entities and remove tags |
+| `url_handling` | `token` | `keep`, `token`, or `remove` |
+| `acknowledgement_filter` | `true` | Remove only short acknowledgement-only text |
 | `spam_filter` | `false` | Apply the shared pipeline noise gate |
+| `repeated_char_filter` | `true` | Remove runs of six or more repeated characters |
+| `uppercase_filter` | `false` | Remove mostly-uppercase text |
+| `detect_language` | `true` | Attach a Lingua label |
+| `allowed_languages` | `[]` | Empty means detect but do not filter |
+| `exact_deduplication` | `true` | Keep the first normalized representative |
+
+The standalone dataset workflow uses every field and has its own complete example at
+`configs/dataset-cleaning.example.json`. The older topic-mining CLI continues to use its established `min_length` and
+`spam_filter` behavior until it is migrated to consume `development-clean.jsonl` directly.
 
 ### Embeddings
 
@@ -32,8 +47,18 @@ The CLI keeps its historical `--batch-size 0` shorthand and translates it to the
 | `threshold` | `0.95` | Inclusive range 0..1 |
 | `block_size` | `2048` | At least 1 |
 | `sample_pairs` | `8` | Non-negative |
+| `backend` | `hnsw` | `hnsw` for production or `exhaustive` for small calibration sets |
+| `exhaustive_max_records` | `50000` | Hard safety limit for quadratic calibration runs |
+| `ann_neighbors` | `64` | Candidate neighbours per vector, at least 2 |
+| `ann_ef_construction` | `200` | HNSW construction quality, at least 2 |
+| `ann_ef_search` | `200` | HNSW query quality, at least 2 |
+| `ann_m` | `16` | HNSW graph degree, at least 2 |
+| `random_seed` | `42` | Deterministic HNSW seed |
+| `separate_text_kinds` | `true` | Do not merge comments with replies |
 
 Thresholds are embedding-model-specific and should be checked against sample duplicate pairs before a production run.
+The structural workflow and ANN limitations are documented in
+[`semantic-deduplication.md`](semantic-deduplication.md).
 
 ### Clustering
 
@@ -63,7 +88,7 @@ Processing order is:
 ```python
 from pathlib import Path
 
-from src.analysis import AnalysisConfig, EmbeddingConfig
+from src.ml import AnalysisConfig, EmbeddingConfig
 
 config = AnalysisConfig(
     input_path=Path("data/comments.jsonl"),
@@ -74,7 +99,7 @@ config = AnalysisConfig(
 Configuration can be saved and loaded without losing path or nested-model values:
 
 ```python
-from src.analysis import load_analysis_config, save_analysis_config
+from src.ml import load_analysis_config, save_analysis_config
 
 save_analysis_config(config, Path("analysis.json"))
 restored = load_analysis_config(Path("analysis.json"))

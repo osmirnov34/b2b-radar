@@ -7,8 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.analysis.inspection import DatasetInspection
-from src.analysis.schemas import ExportedComment
+from src.ml.inspection import DatasetInspection
+from src.ml.schemas import ExportedComment
 
 
 class SampleMetadata(BaseModel):

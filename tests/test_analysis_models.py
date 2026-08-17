@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.analysis import (
+from src.ml import (
     AnalysisConfig,
     AnalysisCounts,
     CleaningDecision,

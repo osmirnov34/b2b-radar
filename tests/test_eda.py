@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from scripts.run_eda import main
-from src.analysis.eda import EDAConfig, profile_development_dataset, summarize_numbers, write_eda_reports
-from src.analysis.splitting import SplitConfig, SplitName, split_comments_jsonl
+from src.ml.eda import EDAConfig, profile_development_dataset, summarize_numbers, write_eda_reports
+from src.ml.splitting import SplitConfig, SplitName, split_comments_jsonl
 
 
 def _make_development_split(tmp_path: Path) -> tuple[Path, Path]:

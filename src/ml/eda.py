@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.analysis.cleaning import classify
-from src.analysis.models import CleaningReason
-from src.analysis.schemas import ExportedComment
-from src.analysis.splitting import DatasetSplitManifest, SplitName, normalize_leakage_text
-from src.infrastructure.extractor.language import detect_language
-from src.infrastructure.extractor.noise import is_noise
+from src.ml.cleaning import classify
+from src.ml.models import CleaningReason
+from src.ml.schemas import ExportedComment
+from src.ml.splitting import DatasetSplitManifest, SplitName, normalize_leakage_text
+from src.text_processing.language import detect_language
+from src.text_processing.noise import is_noise
 
 if TYPE_CHECKING:
     from pathlib import Path

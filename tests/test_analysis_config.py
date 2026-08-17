@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.analysis import (
+from src.ml import (
     AnalysisConfig,
+    CleaningConfig,
     ClusteringConfig,
     DeduplicationConfig,
     EmbeddingConfig,
@@ -13,6 +14,8 @@ from src.analysis import (
 )
 
 EXAMPLE_CONFIG = Path(__file__).parents[1] / "configs" / "topic-analysis.example.json"
+SEMANTIC_DEDUP_CONFIG = Path(__file__).parents[1] / "configs" / "semantic-deduplication.example.json"
+DATASET_CLEANING_CONFIG = Path(__file__).parents[1] / "configs" / "dataset-cleaning.example.json"
 
 
 def test_analysis_config_defaults() -> None:
@@ -41,6 +44,14 @@ def test_deduplication_threshold_must_be_probability(threshold: float) -> None:
         DeduplicationConfig(threshold=threshold)
 
 
+def test_deduplication_ann_defaults_are_production_safe() -> None:
+    config = DeduplicationConfig()
+
+    assert config.backend == "hnsw"
+    assert config.ann_neighbors == 64
+    assert config.separate_text_kinds is True
+
+
 def test_config_rejects_invalid_operational_ranges() -> None:
     with pytest.raises(ValidationError):
         EmbeddingConfig(threads=0)
@@ -65,6 +76,14 @@ def test_example_config_matches_contract() -> None:
 
     assert config.schema_version == 1
     assert config.input_path == Path("data/comments.jsonl")
+
+
+def test_stage_specific_example_configs_match_contracts() -> None:
+    cleaning = CleaningConfig.model_validate_json(DATASET_CLEANING_CONFIG.read_text(encoding="utf-8"))
+    deduplication = DeduplicationConfig.model_validate_json(SEMANTIC_DEDUP_CONFIG.read_text(encoding="utf-8"))
+
+    assert cleaning.url_handling == "token"
+    assert deduplication.backend == "hnsw"
 
 
 def test_config_json_round_trip(tmp_path: Path) -> None:

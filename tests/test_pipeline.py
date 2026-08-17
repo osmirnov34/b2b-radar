@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.domain.source import IngestStatus, Source, SourceType
-from src.pipeline import _save_documents
+from src.ingestion.pipeline import _save_documents
 
 
 def _source(source_id: int) -> Source:
@@ -24,7 +24,7 @@ async def test_save_documents_marks_source_success(monkeypatch: pytest.MonkeyPat
         session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
         source_repo=SimpleNamespace(set_ingest_status=AsyncMock()),
     )
-    monkeypatch.setattr("src.pipeline._extract_documents_for_source", AsyncMock(return_value=4))
+    monkeypatch.setattr("src.ingestion.pipeline._extract_documents_for_source", AsyncMock(return_value=4))
 
     saved = await _save_documents(ctx, [_source(1)], 100)  # type: ignore[arg-type]
 
@@ -41,7 +41,10 @@ async def test_save_documents_isolates_failure(monkeypatch: pytest.MonkeyPatch) 
         session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
         source_repo=SimpleNamespace(set_ingest_status=AsyncMock()),
     )
-    monkeypatch.setattr("src.pipeline._extract_documents_for_source", AsyncMock(side_effect=RuntimeError("quota")))
+    monkeypatch.setattr(
+        "src.ingestion.pipeline._extract_documents_for_source",
+        AsyncMock(side_effect=RuntimeError("quota")),
+    )
 
     saved = await _save_documents(ctx, [_source(1), _source(2)], 100)  # type: ignore[arg-type]
 

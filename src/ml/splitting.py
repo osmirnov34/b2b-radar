@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.analysis.cleaning import THANKS_TOKENS
-from src.analysis.schemas import ExportedComment
+from src.ml.cleaning import THANKS_TOKENS
+from src.ml.schemas import ExportedComment
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

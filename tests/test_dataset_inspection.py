@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from src.analysis import DatasetFormat, detect_dataset_format, inspect_comments_jsonl
+from src.ml import DatasetFormat, detect_dataset_format, inspect_comments_jsonl
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

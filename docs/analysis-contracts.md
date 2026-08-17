@@ -1,7 +1,7 @@
 # Analysis data contracts
 
 The offline topic-analysis workflow exchanges three versioned formats. Their executable Pydantic definitions live in
-`src/analysis/schemas.py`; fixtures in `tests/fixtures/` are canonical examples.
+`src/ml/schemas.py`; fixtures in `tests/fixtures/` are canonical examples.
 
 Readers ignore unknown fields for forward compatibility. Producers must preserve the required fields and their
 meaning. Text is UTF-8 in every format.
@@ -20,11 +20,22 @@ default to zero.
 | `comment_published_at` | ISO 8601 datetime or null | Comment publication time |
 | `comment_like_count` | non-negative integer | Comment likes |
 | `comment_total_reply_count` | non-negative integer | Total replies reported by YouTube |
+| `comment_replies` | array | Inline replies with required `text` and optional metadata |
 | `video_id` | string | YouTube video identifier |
 | `video_title` | string | Video title at export time |
 | `video_channel` | string | Channel title at export time |
 | `video_url` | string | Source video URL |
 | `search_query` | string | Query that first discovered the source |
+
+## Text units and cleaned development output
+
+Before cleaning, each exported thread is flattened into unambiguous records. `text_kind` is either `comment` or
+`reply`; replies require `parent_record_id`. `record_id` is the platform ID when available, otherwise a deterministic
+hash. Author, timestamp, likes, and source provenance are optional and never determine text ownership.
+
+`development-clean.jsonl` adds `clean_text`, `detected_language`, and `duplicate_count` while retaining the original
+`text`. The original supports audit and provenance; only `clean_text` is intended for embeddings. Exact duplicates are
+represented once, and `duplicate_count` records the normalized group size.
 
 ## Cluster output (`clusters.jsonl`)
 

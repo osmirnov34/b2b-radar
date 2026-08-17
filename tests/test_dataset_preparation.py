@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from scripts.inspect_dataset import main
-from src.analysis import (
+from src.ml import (
     DatasetInspection,
     SampleMetadata,
     create_research_sample,

@@ -30,7 +30,7 @@ uvicorn src.web.app:app --reload --port 8000   # http://127.0.0.1:8000
 ```
 
 Pages: dashboard, sources/videos (`/videos`), video detail, comments (`/comments`), API keys (`/api-keys`),
-and analysis imports (`/analysis`). Adding a source or reprocessing triggers `src/pipeline.py` in a FastAPI background
+and analysis imports (`/analysis`). Adding a source or reprocessing triggers `src/ingestion/pipeline.py` in a FastAPI background
 task. Each source tracks `ingest_status` (`pending`, `running`, `success`, or `failed`).
 
 The pipeline fetches up to 5 replies per comment via YouTube API (`part=snippet,replies`); all replies
@@ -78,7 +78,10 @@ The separation between persisted contracts and internal analysis objects is desc
 [`docs/analysis-models.md`](docs/analysis-models.md).
 Instructions for validating, sampling, and splitting the full corpus without source-group leakage are in
 [`docs/dataset-preparation.md`](docs/dataset-preparation.md).
-The same guide covers privacy-safe development EDA and the thin notebook in `notebooks/01_development_eda.ipynb`.
+The same guide covers privacy-safe development EDA, explicit comment/reply text units, cleaning, and the thin notebook
+in `notebooks/01_development_eda.ipynb`.
+ANN-based semantic deduplication is documented in
+[`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 
 ### Deployment (Caddy + HTTP Basic Auth)
 

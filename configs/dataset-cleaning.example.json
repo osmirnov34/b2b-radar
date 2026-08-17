@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "min_length": 20,
+  "max_length": null,
+  "unicode_normalization": "NFKC",
+  "strip_html": true,
+  "url_handling": "token",
+  "acknowledgement_filter": true,
+  "spam_filter": true,
+  "repeated_char_filter": true,
+  "uppercase_filter": false,
+  "detect_language": true,
+  "allowed_languages": [],
+  "exact_deduplication": true
+}

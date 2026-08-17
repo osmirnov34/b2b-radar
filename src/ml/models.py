@@ -2,8 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.analysis.config import AnalysisConfig
-from src.analysis.schemas import AnalysisRunMetadata, ClusterComment, ClusterRecord, ExportedComment
+from src.ml.config import AnalysisConfig
+from src.ml.schemas import AnalysisRunMetadata, ClusterComment, ClusterRecord, ExportedComment
 
 
 class _InternalModel(BaseModel):
@@ -58,9 +58,15 @@ class CommentRecord(_InternalModel):
 class CleaningReason(StrEnum):
     EMPTY = "empty"
     TOO_SHORT = "too_short"
+    TOO_LONG = "too_long"
+    NO_ALPHANUMERIC = "no_alphanumeric"
     ACKNOWLEDGEMENT = "acknowledgement"
     FOREIGN_LANGUAGE = "foreign_language"
+    DISALLOWED_LANGUAGE = "disallowed_language"
     PIPELINE_NOISE = "pipeline_noise"
+    URL_ONLY = "url_only"
+    REPEATED_CHARACTERS = "repeated_characters"
+    MOSTLY_UPPERCASE = "mostly_uppercase"
     EXACT_DUPLICATE = "exact_duplicate"
 
 

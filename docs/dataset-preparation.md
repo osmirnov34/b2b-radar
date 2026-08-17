@@ -166,7 +166,50 @@ Open `notebooks/01_development_eda.ipynb` for a thin presentation of the safe pr
 not display raw comments, validation, or test data. Re-run the CLI after changing the source split; checksum validation
 prevents stale or substituted data from being analysed silently.
 
-## 6. Blocking conditions
+## 6. Clean development text units
+
+Cleaning first flattens each thread into explicit text units. A top-level comment has `text_kind="comment"`; every
+nested reply has `text_kind="reply"` and a required `parent_record_id`. Missing metadata is acceptable, but text
+ownership is never inferred from a generic `text` field. Replies without platform IDs receive deterministic hashed
+IDs.
+
+```bash
+uv run python scripts/clean_dataset.py \
+  data/interim/splits/development.jsonl \
+  --manifest data/interim/splits/split-manifest.json \
+  --config configs/dataset-cleaning.example.json \
+  --output-dir data/processed/cleaning
+```
+
+The example configuration applies NFKC, decodes HTML entities, strips tags, replaces URLs with `<URL>`, removes
+URL-only records, acknowledgements, configured noise, repeated-character spam, and normalized exact duplicates.
+Language is detected and stored but `allowed_languages` is empty, so no language is filtered before manual
+calibration. The original `text` and model-facing `clean_text` remain separate.
+
+Generated local artifacts:
+
+```text
+data/processed/cleaning/development-clean.jsonl
+data/processed/cleaning/cleaning-manifest.json
+data/processed/cleaning/cleaning-report.md
+data/processed/cleaning/cleaning-decisions.jsonl
+data/processed/cleaning/aggregate-tables/
+```
+
+The cleaned JSONL contains source text and provenance and therefore stays ignored by Git. Decisions and reports use
+only indexes, hashes, roles, language labels, counts, and removal reasons. For manual calibration, join a decision's
+`record_index` to the development data locally; never commit that joined sample. Review every removal category,
+borderline lengths, mixed-language text, and retained comments that begin with a thank-you before enabling stricter
+rules. Semantic near-duplicates are deliberately left for the embedding/ANN stage.
+
+The command refuses to overwrite artifacts without `--force`, verifies the development checksum before and after
+processing, and stops if the split row count differs from its manifest.
+
+Exact deduplication is role-aware: its key contains both `text_kind` and normalized text. Identical text therefore
+remains observable once as a top-level comment and once as a reply, while duplicates within the same role collapse to
+the earliest deterministic representative.
+
+## 7. Blocking conditions
 
 The dataset is blocked when:
 
@@ -176,4 +219,4 @@ The dataset is blocked when:
 - the valid record count differs from `--expected-records` beyond the configured tolerance.
 
 Missing authors, dates, queries, duplicates, and individual empty comments are reported but are not format-level
-failures. Cleaning decisions happen in a later pipeline stage; inspection never mutates `data/raw`.
+failures. Inspection and cleaning never mutate `data/raw`.

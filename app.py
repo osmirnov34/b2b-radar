@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import logging
 
-from src.pipeline import run
+from src.ingestion.pipeline import run
 
 logging.basicConfig(level=logging.INFO)
 

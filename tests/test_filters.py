@@ -1,5 +1,5 @@
-from src.infrastructure.extractor.language import detect_language, is_probably_russian
-from src.infrastructure.extractor.noise import is_noise
+from src.text_processing.language import detect_language, is_probably_russian
+from src.text_processing.noise import is_noise
 
 
 def test_short_text_is_kept_when_language_is_uncertain() -> None:

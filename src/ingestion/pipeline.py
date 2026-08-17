@@ -5,16 +5,16 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.source import IngestStatus, Source
-from src.infrastructure.api.youtube import YoutubeClient
 from src.infrastructure.db.repositories import (
     DocumentRepository,
     SourceRepository,
     YoutubeApiKeyRepository,
 )
 from src.infrastructure.db.session import get_session
-from src.infrastructure.extractor.language import is_probably_russian
-from src.infrastructure.extractor.noise import is_noise
-from src.infrastructure.extractor.youtube import YoutubeExtractor
+from src.ingestion.api.youtube import YoutubeClient
+from src.ingestion.extractor.youtube import YoutubeExtractor
+from src.text_processing.language import is_probably_russian
+from src.text_processing.noise import is_noise
 
 logger = logging.getLogger(__name__)
 

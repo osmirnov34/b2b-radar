@@ -4,7 +4,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.analysis.schemas import AnalysisRunMetadata, ClusterRecord, ExportedComment
+from src.ml.schemas import (
+    AnalysisRunMetadata,
+    CleanedTextUnit,
+    ClusterRecord,
+    ExportedComment,
+    TextKind,
+    exported_comment_to_text_units,
+)
 from src.web.routers.analysis import _parse_clusters
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -30,6 +37,29 @@ def test_comments_contract_normalizes_nullable_provenance() -> None:
     assert comment.comment_author == ""
     assert comment.video_channel == ""
     assert comment.search_query == ""
+
+
+def test_comment_and_replies_become_unambiguous_text_units() -> None:
+    comment = ExportedComment.model_validate(
+        {
+            "comment_id": "parent",
+            "comment_text": "Main text",
+            "video_id": "video",
+            "comment_replies": [
+                {"text": "Reply text", "author_display_name": "Author"},
+                {"text": "Another reply"},
+            ],
+        },
+    )
+
+    units = exported_comment_to_text_units(comment)
+
+    assert [unit.text_kind for unit in units] == [TextKind.COMMENT, TextKind.REPLY, TextKind.REPLY]
+    assert units[1].parent_record_id == "parent"
+    assert units[1].record_id.startswith("reply:")
+    assert units[1].record_id != units[2].record_id
+    cleaned = CleanedTextUnit(**units[1].model_dump(), clean_text="Reply text", detected_language="english")
+    assert cleaned.text == "Reply text"
 
 
 def test_clusters_fixture_matches_contract_and_web_import() -> None:

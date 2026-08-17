@@ -10,7 +10,7 @@ from scripts.mine_topics import (
     parse_config,
     write_results,
 )
-from src.analysis import ClusterRecord, CommentRecord
+from src.ml import ClusterRecord, CommentRecord
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

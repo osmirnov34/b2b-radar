@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.analysis import EDAConfig, create_research_sample, profile_development_dataset, write_eda_reports
+from src.ml import EDAConfig, create_research_sample, profile_development_dataset, write_eda_reports
 
 
 def build_parser() -> argparse.ArgumentParser:

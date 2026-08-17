@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.infrastructure.db.repositories import DocumentRepository, SourceRepository, YoutubeApiKeyRepository
-from src.pipeline import reprocess_failed_sources, reprocess_source, run
+from src.ingestion.pipeline import reprocess_failed_sources, reprocess_source, run
 from src.web.dependencies import SessionDep
 from src.web.nav import nav_context
 from src.web.templating import templates

@@ -31,6 +31,8 @@ dev = [
 # Offline pain-mining analysis (embeddings + topic clustering). Heavy ML stack
 analysis = [
     "bertopic>=0.16",
+    "hnswlib>=0.8.0",
+    "numpy>=1.26",
     "sentence-transformers>=3.0",
     "stopwordsiso>=0.6.1",
 ]
@@ -67,8 +69,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ANN401", "PLR2004", "RUF001", "S101", "SLF001"]
 "src/infrastructure/db/repositories.py" = ["PLR0913"]
-"src/analysis/inspection.py" = ["C901", "PLR0912", "PLR0915"]
-"src/analysis/eda.py" = ["C901", "PLR0912", "PLR0915"]
+"src/ml/inspection.py" = ["C901", "PLR0912", "PLR0915"]
+"src/ml/eda.py" = ["C901", "PLR0912", "PLR0915"]
+"src/ml/cleaning.py" = ["C901", "PLR0911"]
+"src/ml/semantic_deduplication.py" = ["C901", "PLC0415", "PLR0913"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

@@ -18,7 +18,15 @@
     "enabled": true,
     "threshold": 0.95,
     "block_size": 2048,
-    "sample_pairs": 8
+    "sample_pairs": 8,
+    "backend": "hnsw",
+    "exhaustive_max_records": 50000,
+    "ann_neighbors": 64,
+    "ann_ef_construction": 200,
+    "ann_ef_search": 200,
+    "ann_m": 16,
+    "random_seed": 42,
+    "separate_text_kinds": true
   },
   "clustering": {
     "min_topic_size": 250,

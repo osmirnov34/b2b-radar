@@ -2,8 +2,8 @@ from datetime import UTC
 
 import pytest
 
-from src.infrastructure.api.youtube import YoutubeClient
-from src.infrastructure.extractor.youtube import YoutubeExtractor
+from src.ingestion.api.youtube import YoutubeClient
+from src.ingestion.extractor.youtube import YoutubeExtractor
 
 
 class _FlakyRequest:
@@ -19,7 +19,7 @@ class _FlakyRequest:
 
 def test_youtube_request_retries_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
     request = _FlakyRequest()
-    monkeypatch.setattr("src.infrastructure.api.youtube.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("src.ingestion.api.youtube.time.sleep", lambda _seconds: None)
 
     assert YoutubeClient._execute_with_retry(request) == {"items": [{"id": "ok"}]}  # type: ignore[arg-type]
     assert request.calls == 2

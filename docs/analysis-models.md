@@ -18,8 +18,8 @@ AnalysisResult
 ClusterRecord + AnalysisRunMetadata
 ```
 
-Transport contracts in `src/analysis/schemas.py` accept unknown additive fields for forward compatibility. Internal
-models in `src/analysis/models.py` are frozen and reject unknown fields so programming and notebook mistakes fail close
+Transport contracts in `src/ml/schemas.py` accept unknown additive fields for forward compatibility. Internal
+models in `src/ml/models.py` are frozen and reject unknown fields so programming and notebook mistakes fail close
 to their source.
 
 ## Comments

@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.analysis import SplitConfig, SplitName, split_comments_jsonl, write_split_markdown
+from src.ml import SplitConfig, SplitName, split_comments_jsonl, write_split_markdown
 
 
 def build_parser() -> argparse.ArgumentParser:

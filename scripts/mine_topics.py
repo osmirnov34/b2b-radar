@@ -31,17 +31,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.analysis.cleaning import THANKS_TOKENS
-from src.analysis.cleaning import clean as clean_comments
-from src.analysis.config import (
+from src.ml.cleaning import THANKS_TOKENS
+from src.ml.cleaning import clean as clean_comments
+from src.ml.config import (
     AnalysisConfig,
     CleaningConfig,
     ClusteringConfig,
     DeduplicationConfig,
     EmbeddingConfig,
 )
-from src.analysis.models import CommentRecord
-from src.analysis.schemas import ANALYSIS_SCHEMA_VERSION, ClusterComment, ClusterRecord, ExportedComment
+from src.ml.semantic_deduplication import semantic_deduplicate
+from src.ml.models import CommentRecord
+from src.ml.schemas import ANALYSIS_SCHEMA_VERSION, ClusterComment, ClusterRecord, ExportedComment
 
 if TYPE_CHECKING:
     import numpy as np
@@ -120,56 +121,6 @@ def embed(texts: list[str], model_name: str, n_threads: int, batch_size: int = 0
           f"prefix={prefix!r}) ...", file=sys.stderr)
     vectors = model.encode(prefixed, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)
     return np.asarray(vectors, dtype=np.float32)
-
-
-def near_dedup(
-    embeddings: np.ndarray,
-    threshold: float,
-    block_size: int = 2048,
-    n_examples: int = 8,
-) -> tuple[list[int], list[tuple[int, int]]]:
-    """Collapse near-duplicates (cosine >= threshold) into one representative each.
-
-    Embeddings are L2-normalized, so dot product == cosine. Streamed in row-blocks to avoid the
-    full n*n matrix. Threshold is model-specific — eyeball the returned sample pairs to re-tune.
-    Returns (indices_to_keep, sample (representative, dropped) index pairs).
-    """
-    import numpy as np
-
-    n = embeddings.shape[0]
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        root = x
-        while parent[root] != root:
-            root = parent[root]
-        while parent[x] != root:
-            parent[x], x = root, parent[x]
-        return root
-
-    def union(a: int, b: int) -> None:
-        ra, rb = find(a), find(b)
-        if ra == rb:
-            return
-        lo, hi = (ra, rb) if ra < rb else (rb, ra)
-        parent[hi] = lo  # earliest index is the representative
-
-    print(f"Near-dup: scanning {n} vectors (cosine >= {threshold}) ...", file=sys.stderr)
-    for start in range(0, n, block_size):
-        end = min(start + block_size, n)
-        sims = embeddings[start:end] @ embeddings.T
-        for r in range(end - start):
-            gi = start + r
-            for offset in np.nonzero(sims[r, gi + 1 :] > threshold)[0]:  # forward-only: matrix is symmetric
-                union(gi, gi + 1 + int(offset))
-
-    keep = [i for i in range(n) if find(i) == i]
-    examples: list[tuple[int, int]] = []
-    for i in range(n):
-        rep = find(i)
-        if rep != i and len(examples) < n_examples:
-            examples.append((rep, i))
-    return keep, examples
 
 
 def build_topic_model(min_topic_size: int) -> object:
@@ -416,15 +367,15 @@ def main() -> None:
         np.save(cache, embeddings)
 
     if config.deduplication.enabled:
-        keep_idx, examples = near_dedup(
-            embeddings,
-            config.deduplication.threshold,
-            block_size=config.deduplication.block_size,
-            n_examples=config.deduplication.sample_pairs,
-        )
+        deduplication = semantic_deduplicate(embeddings, config.deduplication)
+        keep_idx = deduplication.keep_indices
         print(f"Near-dup: kept {len(keep_idx)}, dropped {len(texts) - len(keep_idx)}.", file=sys.stderr)
-        for rep, dup in examples:  # eyeball to re-tune threshold for this model
-            print(f"  keep {texts[rep][:120]!r}\n  drop {texts[dup][:120]!r}", file=sys.stderr)
+        for pair in deduplication.sample_pairs:
+            print(
+                f"  representative_index={pair.representative_index} duplicate_index={pair.duplicate_index} "
+                f"cosine={pair.similarity:.4f}",
+                file=sys.stderr,
+            )
         embeddings = embeddings[np.array(keep_idx)]
         texts = [texts[i] for i in keep_idx]
         kept = [kept[i] for i in keep_idx]

@@ -5,8 +5,8 @@ from urllib.parse import parse_qs, urlparse
 
 from src.domain.document import Document
 from src.domain.source import Source, SourceType
-from src.infrastructure.api.youtube import YoutubeClient
-from src.infrastructure.extractor.base import Extractor
+from src.ingestion.api.youtube import YoutubeClient
+from src.ingestion.extractor.base import Extractor
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from scripts.split_dataset import main
-from src.analysis.splitting import (
+from src.ml.splitting import (
     DatasetSplitManifest,
     SplitConfig,
     SplitName,

@@ -1,7 +1,20 @@
 """Reusable contracts and services for offline topic analysis."""
 
-from src.analysis.cleaning import THANKS_TOKENS, classify, clean
-from src.analysis.config import (
+from src.ml.cleaning import (
+    THANKS_TOKENS,
+    PreparedText,
+    classify,
+    classify_prepared_text,
+    clean,
+    prepare_text,
+)
+from src.ml.cleaning_dataset import (
+    CleaningDecisionRecord,
+    DatasetCleaningManifest,
+    DatasetCleaningStats,
+    clean_development_dataset,
+)
+from src.ml.config import (
     AnalysisConfig,
     CleaningConfig,
     ClusteringConfig,
@@ -10,8 +23,8 @@ from src.analysis.config import (
     load_analysis_config,
     save_analysis_config,
 )
-from src.analysis.dataset import SampleMetadata, create_research_sample, write_inspection_reports
-from src.analysis.eda import (
+from src.ml.dataset import SampleMetadata, create_research_sample, write_inspection_reports
+from src.ml.eda import (
     EDAConfig,
     EDAProfile,
     HashedGroupCount,
@@ -20,7 +33,7 @@ from src.analysis.eda import (
     summarize_numbers,
     write_eda_reports,
 )
-from src.analysis.inspection import (
+from src.ml.inspection import (
     DatasetFormat,
     DatasetInspection,
     FormatInspection,
@@ -29,7 +42,7 @@ from src.analysis.inspection import (
     detect_dataset_format,
     inspect_comments_jsonl,
 )
-from src.analysis.models import (
+from src.ml.models import (
     AnalysisCounts,
     AnalysisResult,
     CleaningDecision,
@@ -44,14 +57,28 @@ from src.analysis.models import (
     TopicAssignment,
     TopicSummary,
 )
-from src.analysis.schemas import (
+from src.ml.schemas import (
     ANALYSIS_SCHEMA_VERSION,
     AnalysisRunMetadata,
+    CleanedTextUnit,
     ClusterComment,
     ClusterRecord,
+    EmbeddingArtifactManifest,
     ExportedComment,
+    ExportedReply,
+    TextKind,
+    TextUnit,
+    exported_comment_to_text_units,
 )
-from src.analysis.splitting import (
+from src.ml.semantic_deduplication import (
+    CandidateIndex,
+    ExhaustiveCandidateIndex,
+    HnswCandidateIndex,
+    SemanticDeduplicationManifest,
+    run_semantic_deduplication,
+    semantic_deduplicate,
+)
+from src.ml.splitting import (
     DatasetSplitManifest,
     SplitAssignment,
     SplitConfig,
@@ -70,8 +97,11 @@ __all__ = [
     "AnalysisCounts",
     "AnalysisResult",
     "AnalysisRunMetadata",
+    "CandidateIndex",
+    "CleanedTextUnit",
     "CleaningConfig",
     "CleaningDecision",
+    "CleaningDecisionRecord",
     "CleaningReason",
     "CleaningResult",
     "CleaningStats",
@@ -79,6 +109,8 @@ __all__ = [
     "ClusterRecord",
     "ClusteringConfig",
     "CommentRecord",
+    "DatasetCleaningManifest",
+    "DatasetCleaningStats",
     "DatasetFormat",
     "DatasetInspection",
     "DatasetSplitManifest",
@@ -89,30 +121,44 @@ __all__ = [
     "DuplicatePair",
     "EDAConfig",
     "EDAProfile",
+    "EmbeddingArtifactManifest",
     "EmbeddingConfig",
+    "ExhaustiveCandidateIndex",
     "ExportedComment",
+    "ExportedReply",
     "FormatInspection",
     "HashedGroupCount",
+    "HnswCandidateIndex",
     "InspectionError",
     "NumericSummary",
+    "PreparedText",
     "SampleMetadata",
+    "SemanticDeduplicationManifest",
     "SplitAssignment",
     "SplitConfig",
     "SplitName",
     "SplitStats",
+    "TextKind",
     "TextLengthStats",
+    "TextUnit",
     "TopicAssignment",
     "TopicSummary",
     "classify",
+    "classify_prepared_text",
     "clean",
+    "clean_development_dataset",
     "create_research_sample",
     "detect_dataset_format",
+    "exported_comment_to_text_units",
     "inspect_comments_jsonl",
     "is_informative_leakage_text",
     "load_analysis_config",
     "normalize_leakage_text",
+    "prepare_text",
     "profile_development_dataset",
+    "run_semantic_deduplication",
     "save_analysis_config",
+    "semantic_deduplicate",
     "split_comments_jsonl",
     "summarize_numbers",
     "write_eda_reports",

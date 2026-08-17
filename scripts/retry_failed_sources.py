@@ -16,7 +16,7 @@ import argparse
 import asyncio
 import logging
 
-from src.pipeline import reprocess_failed_sources
+from src.ingestion.pipeline import reprocess_failed_sources
 
 logging.basicConfig(level=logging.INFO)
 
