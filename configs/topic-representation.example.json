@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "min_df": 1,
+  "max_df": 0.95,
+  "ngram_min": 1,
+  "ngram_max": 2,
+  "max_features": 50000,
+  "top_n_words": 10,
+  "stopword_languages": ["ru", "en"],
+  "extra_stopwords": [],
+  "bm25_weighting": true,
+  "reduce_frequent_words": true,
+  "minimum_token_length": 2,
+  "representatives_per_topic": 5,
+  "representative_candidate_multiplier": 20,
+  "minimum_representative_probability": 0.5,
+  "max_cluster_characters": 5000000,
+  "similar_topic_jaccard_warning": 0.7
+}

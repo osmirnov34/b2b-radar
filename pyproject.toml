@@ -79,6 +79,7 @@ ignore = [
 "src/ml/corpus.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
 "src/ml/dimensionality_reduction.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
 "src/ml/clustering.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
+"src/ml/topic_representation.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]
