@@ -25,6 +25,16 @@ from src.ml.config import (
 )
 from src.ml.corpus import CorpusManifest, CorpusRecord, CorpusStats, build_final_corpus
 from src.ml.dataset import SampleMetadata, create_research_sample, write_inspection_reports
+from src.ml.dimensionality_reduction import (
+    DimensionalityReducer,
+    ReductionArtifactManifest,
+    ReductionMode,
+    ReductionQuality,
+    UMAPConfig,
+    UMAPReducer,
+    deterministic_training_indices,
+    reduce_dimensions,
+)
 from src.ml.eda import (
     EDAConfig,
     EDAProfile,
@@ -128,6 +138,7 @@ __all__ = [
     "DeduplicationConfig",
     "DeduplicationResult",
     "DeduplicationStats",
+    "DimensionalityReducer",
     "DuplicateGroup",
     "DuplicatePair",
     "EDAConfig",
@@ -144,6 +155,9 @@ __all__ = [
     "InspectionError",
     "NumericSummary",
     "PreparedText",
+    "ReductionArtifactManifest",
+    "ReductionMode",
+    "ReductionQuality",
     "SampleMetadata",
     "SemanticDeduplicationManifest",
     "SentenceTransformerEncoder",
@@ -157,6 +171,8 @@ __all__ = [
     "TextUnit",
     "TopicAssignment",
     "TopicSummary",
+    "UMAPConfig",
+    "UMAPReducer",
     "build_final_corpus",
     "classify",
     "classify_prepared_text",
@@ -164,6 +180,7 @@ __all__ = [
     "clean_development_dataset",
     "create_research_sample",
     "detect_dataset_format",
+    "deterministic_training_indices",
     "embedding_prompt",
     "exported_comment_to_text_units",
     "generate_embeddings",
@@ -173,6 +190,7 @@ __all__ = [
     "normalize_leakage_text",
     "prepare_text",
     "profile_development_dataset",
+    "reduce_dimensions",
     "run_semantic_deduplication",
     "save_analysis_config",
     "semantic_deduplicate",

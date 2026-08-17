@@ -35,6 +35,7 @@ analysis = [
     "numpy>=1.26",
     "sentence-transformers>=3.0",
     "stopwordsiso>=0.6.1",
+    "umap-learn>=0.5.7",
 ]
 
 [tool.ruff]
@@ -75,6 +76,7 @@ ignore = [
 "src/ml/semantic_deduplication.py" = ["C901", "PLC0415", "PLR0913"]
 "src/ml/embeddings.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915"]
 "src/ml/corpus.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
+"src/ml/dimensionality_reduction.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

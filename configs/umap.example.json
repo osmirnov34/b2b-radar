@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "n_neighbors": 15,
+  "clustering_components": 5,
+  "visualization_components": 2,
+  "clustering_min_dist": 0.0,
+  "visualization_min_dist": 0.1,
+  "metric": "cosine",
+  "random_seed": 42,
+  "low_memory": true,
+  "threads": 1,
+  "training_sample_size": 100000,
+  "transform_batch_size": 8192,
+  "trustworthiness_sample_size": 5000
+}
