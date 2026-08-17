@@ -6,8 +6,8 @@ implementations.
 
 Current stages cover contracts, dataset inspection and splitting, EDA, normalization, cleaning, multilingual
 embeddings, semantic deduplication, final-corpus assembly, separate UMAP spaces, and checksum-bound HDBSCAN
-clustering, followed by fixed-label c-TF-IDF topic representation. Outlier handling, evaluation, and export are added
-here as independently testable modules. Large
+clustering, followed by fixed-label c-TF-IDF topics and conservative embedding-based outlier reassignment. Evaluation
+and export are added here as independently testable modules. Large
 vectors and generated data stay under ignored `data/`; persisted metadata uses typed manifests and SHA-256 checksums.
 
 Dependency direction:

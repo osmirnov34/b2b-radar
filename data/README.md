@@ -4,7 +4,7 @@ This directory is intentionally excluded from Git except for this guide.
 
 - `raw/` — immutable downloaded source files.
 - `interim/` — reproducible development/validation/test splits and other intermediate files.
-- `processed/` — cleaned data, embeddings, deduplication indexes, aligned corpus, UMAP, clusters, and local topics.
+- `processed/` — cleaned data, embeddings, deduplication, corpus, UMAP, clusters, topics, and final outlier decisions.
 - `samples/` — deterministic research subsets and metadata.
 - `reports/` — dataset profiles and sanitized validation errors.
 

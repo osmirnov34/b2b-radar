@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "similarity_threshold": 0.85,
+  "single_topic_similarity_threshold": 0.9,
+  "margin_threshold": 0.05,
+  "minimum_topic_size": 20,
+  "minimum_topic_mean_probability": 0.5,
+  "centroid_member_minimum_probability": 0.7,
+  "minimum_centroid_members": 10,
+  "minimum_centroid_cohesion": 0.4,
+  "maximum_centroid_similarity": 0.95,
+  "maximum_reassigned_per_topic": 10000,
+  "maximum_topic_expansion_ratio": 0.25,
+  "maximum_global_reassignment_share": 0.25,
+  "block_size": 4096,
+  "high_reassignment_share_warning": 0.2,
+  "dominant_reassignment_topic_warning": 0.5,
+  "low_margin_warning": 0.08,
+  "random_seed": 42
+}

@@ -85,6 +85,15 @@ from src.ml.models import (
     TopicAssignment,
     TopicSummary,
 )
+from src.ml.outlier_reassignment import (
+    FinalClusterSummary,
+    OutlierDecision,
+    OutlierDecisionReason,
+    OutlierReassignmentConfig,
+    OutlierReassignmentManifest,
+    OutlierReassignmentMetrics,
+    reassign_outliers,
+)
 from src.ml.schemas import (
     ANALYSIS_SCHEMA_VERSION,
     AnalysisRunMetadata,
@@ -176,6 +185,7 @@ __all__ = [
     "ExhaustiveCandidateIndex",
     "ExportedComment",
     "ExportedReply",
+    "FinalClusterSummary",
     "FormatInspection",
     "HDBSCANClusterer",
     "HDBSCANConfig",
@@ -183,6 +193,11 @@ __all__ = [
     "HnswCandidateIndex",
     "InspectionError",
     "NumericSummary",
+    "OutlierDecision",
+    "OutlierDecisionReason",
+    "OutlierReassignmentConfig",
+    "OutlierReassignmentManifest",
+    "OutlierReassignmentMetrics",
     "PreparedText",
     "ReductionArtifactManifest",
     "ReductionMode",
@@ -230,6 +245,7 @@ __all__ = [
     "normalize_leakage_text",
     "prepare_text",
     "profile_development_dataset",
+    "reassign_outliers",
     "reduce_dimensions",
     "run_semantic_deduplication",
     "save_analysis_config",
