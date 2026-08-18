@@ -34,6 +34,8 @@ analysis = [
     "hdbscan>=0.8.40",
     "hnswlib>=0.8.0",
     "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "scipy>=1.11",
     "sentence-transformers>=3.0",
     "stopwordsiso>=0.6.1",
     "umap-learn>=0.5.7",
@@ -81,6 +83,7 @@ ignore = [
 "src/ml/clustering.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
 "src/ml/topic_representation.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S403"]
 "src/ml/outlier_reassignment.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
+"src/ml/evaluation.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S105"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

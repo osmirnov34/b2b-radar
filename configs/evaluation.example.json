@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "geometry_sample_size": 10000,
+  "bootstrap_runs": 10,
+  "bootstrap_share": 0.8,
+  "manual_topics": 20,
+  "manual_examples_per_topic": 5,
+  "manual_outliers": 20,
+  "minimum_manual_annotations": 100,
+  "random_seed": 42,
+  "maximum_final_outlier_share": 0.5,
+  "minimum_stability_ari": 0.6,
+  "minimum_manual_precision": 0.75,
+  "minimum_business_relevance": 0.6,
+  "maximum_topic_keyword_jaccard": 0.7,
+  "maximum_reassignment_degradation": 0.05,
+  "validation_completed": false
+}
