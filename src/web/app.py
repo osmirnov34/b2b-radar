@@ -7,9 +7,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from src.config import get_ml_settings
 from src.infrastructure.db.repositories import SourceRepository
 from src.infrastructure.db.session import get_session
-from src.web.routers import analysis, api_keys, dashboard, documents, sources
+from src.web.ml_snapshot import MLSnapshotRepository
+from src.web.routers import analysis, api_keys, dashboard, documents, ml_topics, sources
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +37,17 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-def create_app() -> FastAPI:
+def create_app(*, ml_repository: MLSnapshotRepository | None = None) -> FastAPI:
     app = FastAPI(title="B2B Radar", lifespan=_lifespan)
+
+    if ml_repository is None:
+        ml_settings = get_ml_settings()
+        ml_repository = MLSnapshotRepository(
+            ml_settings.ml_export_manifest,
+            enabled=ml_settings.ml_results_enabled,
+            allow_unreliable=ml_settings.ml_allow_unreliable,
+        )
+    app.state.ml_repository = ml_repository
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -45,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(documents.router)
     app.include_router(analysis.router)
     app.include_router(api_keys.router)
+    app.include_router(ml_topics.router)
 
     return app
 

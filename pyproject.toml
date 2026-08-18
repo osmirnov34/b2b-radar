@@ -85,6 +85,7 @@ ignore = [
 "src/ml/outlier_reassignment.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
 "src/ml/evaluation.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S105"]
 "src/ml/export.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "TRY301"]
+"src/web/ml_snapshot.py" = ["C901"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

@@ -19,4 +19,17 @@ def test_expected_web_routes_are_registered() -> None:
         if original_router := getattr(route, "original_router", None):
             pending.extend(original_router.routes)
 
-    assert {"/", "/videos", "/queries", "/comments", "/comments/export.jsonl", "/analysis", "/api-keys"} <= paths
+    assert {
+        "/",
+        "/videos",
+        "/queries",
+        "/comments",
+        "/comments/export.jsonl",
+        "/analysis",
+        "/api-keys",
+        "/api/topics",
+        "/api/topics/{topic_id}",
+        "/api/topics/{topic_id}/assignments",
+        "/api/ml/outliers",
+        "/api/ml/quality",
+    } <= paths
