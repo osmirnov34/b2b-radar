@@ -7,8 +7,8 @@ implementations.
 Current stages cover contracts, dataset inspection and splitting, EDA, normalization, cleaning, multilingual
 embeddings, semantic deduplication, final-corpus assembly, separate UMAP spaces, and checksum-bound HDBSCAN
 clustering, followed by fixed-label c-TF-IDF topics and conservative embedding-based outlier reassignment. Evaluation
-now adds geometry, bootstrap stability, reassignment comparison, and a human-review gate. Export is added here as an
-independently testable module. Large
+adds geometry, bootstrap stability, reassignment comparison, and a human-review gate. A checksum-bound export layer
+then publishes safe application contracts and an explicit local research variant. Large
 vectors and generated data stay under ignored `data/`; persisted metadata uses typed manifests and SHA-256 checksums.
 
 Dependency direction:
