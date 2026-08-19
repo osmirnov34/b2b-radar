@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "include_research_text": false,
-  "require_final_evaluation": false,
+  "require_final_evaluation": true,
   "include_topic_keywords": true,
   "maximum_keywords_per_topic": 10
 }

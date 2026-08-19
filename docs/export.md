@@ -17,7 +17,7 @@ python scripts/export_topic_results.py \
   --output-dir data/processed/export
 ```
 
-Set `require_final_evaluation` to reject preliminary stage-12 results. The default allows a clearly marked preliminary
+Set `require_final_evaluation` to reject preliminary stage-12 results. The library default allows a clearly marked preliminary
 research export so the pipeline can be inspected before validation is complete.
 
 ## Public contracts
