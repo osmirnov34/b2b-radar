@@ -112,3 +112,26 @@ pytest tests/test_ml_pipeline.py -q
 
 The smoke test exercises ordered execution, checkpoint/resume, the manual-review stop, strict publication, and
 rollback without network access or heavyweight model training.
+
+## Read-only dry-run API (foundation)
+
+The first dry-run implementation layer is available for notebook integration:
+
+```python
+from pathlib import Path
+
+from src.operations import PipelineConfig, dry_run_pipeline
+
+config_path = Path("configs/pipeline.example.json")
+config = PipelineConfig.model_validate_json(config_path.read_text())
+report = dry_run_pipeline(config, Path.cwd(), config_path=config_path)
+```
+
+This API creates no directory, manifest, log, temporary file, or symlink and launches no subprocess. It uses the same
+pipeline context and command generator as a real run. It checks Python, scripts, input/config readability, analysis
+packages, free disk space and permissions; streams the complete dataset for SHA-256 and line count; and validates the
+first 100 non-empty records against the comment/reply contract without retaining or returning text values. The report
+contains typed checks, stage actions, expected markers, a manual-gate forecast, and the command for a future real run.
+
+CLI rendering, deeper typed configuration checks, publication dry-run, and the notebook display belong to the next
+dry-run implementation increments; they are intentionally not duplicated inside this foundational API.

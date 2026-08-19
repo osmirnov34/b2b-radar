@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,13 +18,17 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.ml.evaluation import EvaluationMetrics, EvaluationStatus
+from src.ml.evaluation import EvaluationConfig, EvaluationMetrics, EvaluationStatus
+from src.ml.inspection import DatasetFormat, detect_dataset_format
+from src.ml.schemas import ExportedComment
 from src.web.ml_snapshot import load_public_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_DRY_RUN_STRUCTURE_SAMPLE = 100
+_EXPECTED_RECORDS_TOLERANCE = 0.10
 
 
 class _PipelineModel(BaseModel):
@@ -55,6 +62,65 @@ class PipelineStatus(StrEnum):
 class StageStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class DryRunStatus(StrEnum):
+    READY = "ready"
+    WARNING = "warning"
+    BLOCKED = "blocked"
+
+
+class DryRunStageAction(StrEnum):
+    RUN = "run"
+    SKIP = "skip"
+    RESTART = "restart"
+    BLOCKED = "blocked"
+
+
+class DryRunCheck(_PipelineModel):
+    code: str = Field(pattern=r"^[a-z0-9_.-]+$")
+    status: DryRunStatus
+    message: str
+    path: str | None = None
+
+
+class DryRunDatasetSummary(_PipelineModel):
+    path: str
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    lines_total: int = Field(ge=0)
+    non_empty_records: int = Field(ge=0)
+    expected_records: int | None = Field(default=None, ge=1)
+    expected_format: str
+    detected_format: str
+    format_matches: bool
+    usable: bool
+    structural_errors: int = Field(ge=0)
+
+
+class DryRunStageResult(_PipelineModel):
+    number: int = Field(ge=1)
+    stage: PipelineStage
+    action: DryRunStageAction
+    reason: str
+    command: list[str]
+    input_paths: list[str]
+    output_paths: list[str]
+    requires_force: bool = False
+    blocking_checks: list[str] = Field(default_factory=list)
+
+
+class PipelineDryRunReport(_PipelineModel):
+    schema_version: int = 1
+    status: DryRunStatus
+    run_id: str
+    run_dir: str
+    dataset: DryRunDatasetSummary | None
+    available_disk_gb: float | None = Field(default=None, ge=0)
+    checks: list[DryRunCheck]
+    stages: list[DryRunStageResult]
+    awaiting_review_expected: bool
+    real_command: list[str]
 
 
 class PipelineConfig(_PipelineModel):
@@ -103,6 +169,17 @@ class PipelineRunManifest(_PipelineModel):
     message: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class PipelineContext(_PipelineModel):
+    run_id: str
+    project_root: Path
+    run_dir: Path
+    stage_dirs: dict[PipelineStage, Path]
+    markers: dict[PipelineStage, Path]
+    resume: bool
+    restart_from: PipelineStage | None = None
+    stop_after: PipelineStage | None = None
 
 
 class StageExecutor(Protocol):
@@ -160,6 +237,33 @@ def _markers(stage_dirs: dict[PipelineStage, Path]) -> dict[PipelineStage, Path]
         PipelineStage.EVALUATION: stage_dirs[PipelineStage.EVALUATION] / "evaluation-manifest.json",
         PipelineStage.EXPORT: stage_dirs[PipelineStage.EXPORT] / "export-manifest.json",
     }
+
+
+def _pipeline_context(
+    config: PipelineConfig,
+    project_root: Path,
+    *,
+    run_dir: Path | None,
+    resume: bool,
+    restart_from: PipelineStage | None,
+    stop_after: PipelineStage | None,
+) -> PipelineContext:
+    run_id = config.run_id or (run_dir.name if run_dir is not None else _new_run_id())
+    if not _RUN_ID_PATTERN.fullmatch(run_id):
+        msg = "run_id contains unsafe characters"
+        raise ValueError(msg)
+    active_run_dir = (run_dir or config.runs_root / run_id).resolve()
+    stage_dirs = _paths(active_run_dir)
+    return PipelineContext(
+        run_id=run_id,
+        project_root=project_root.resolve(),
+        run_dir=active_run_dir,
+        stage_dirs=stage_dirs,
+        markers=_markers(stage_dirs),
+        resume=resume,
+        restart_from=restart_from,
+        stop_after=stop_after,
+    )
 
 
 def _command(
@@ -372,10 +476,7 @@ def _command(
     return command
 
 
-def _preflight(config: PipelineConfig, project_root: Path, run_dir: Path) -> None:
-    if sys.version_info < (3, 11) or sys.version_info >= (3, 13):
-        msg = "ML pipeline requires Python >=3.11,<3.13"
-        raise RuntimeError(msg)
+def _required_files(config: PipelineConfig) -> list[Path]:
     required = [
         config.source_dataset,
         config.python_executable,
@@ -391,7 +492,213 @@ def _preflight(config: PipelineConfig, project_root: Path, run_dir: Path) -> Non
     ]
     if config.manual_annotations is not None:
         required.append(config.manual_annotations)
-    missing = [str(path) for path in required if not path.is_file()]
+    return required
+
+
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path.resolve()
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+def _available_disk_gb(path: Path) -> float | None:
+    parent = _nearest_existing_parent(path)
+    if not parent.exists():
+        return None
+    return shutil.disk_usage(parent).free / 1024**3
+
+
+def _check(
+    code: str,
+    passed: bool,
+    success: str,
+    failure: str,
+    *,
+    path: Path | None = None,
+    warning: bool = False,
+) -> DryRunCheck:
+    status = DryRunStatus.READY if passed else (DryRunStatus.WARNING if warning else DryRunStatus.BLOCKED)
+    return DryRunCheck(
+        code=code,
+        status=status,
+        message=success if passed else failure,
+        path=str(path) if path else None,
+    )
+
+
+def _environment_checks(
+    config: PipelineConfig,
+    context: PipelineContext,
+) -> tuple[list[DryRunCheck], float | None]:
+    checks = [
+        _check(
+            "python.version",
+            (3, 11) <= sys.version_info[:2] < (3, 13),
+            f"active Python {sys.version_info.major}.{sys.version_info.minor} is supported",
+            "active Python must be >=3.11,<3.13",
+        ),
+        _check(
+            "python.executable",
+            config.python_executable.is_file() and os.access(config.python_executable, os.R_OK | os.X_OK),
+            "configured Python executable is readable and executable",
+            "configured Python executable is missing or not executable",
+            path=config.python_executable,
+        ),
+    ]
+    config_file_checks = (
+        ("config.cleaning", config.cleaning_config),
+        ("config.embeddings", config.embeddings_config),
+        ("config.deduplication", config.deduplication_config),
+        ("config.umap", config.umap_config),
+        ("config.clustering", config.clustering_config),
+        ("config.topics", config.topics_config),
+        ("config.reassignment", config.reassignment_config),
+        ("config.evaluation", config.evaluation_config),
+        ("config.export", config.export_config),
+    )
+    required_checks: tuple[tuple[str, Path], ...] = (("dataset.source", config.source_dataset), *config_file_checks)
+    if config.manual_annotations is not None:
+        required_checks = (*required_checks, ("annotations.manual", config.manual_annotations))
+    for label, path in required_checks:
+        checks.append(
+            _check(
+                label,
+                path.is_file() and os.access(path, os.R_OK),
+                "required input is readable",
+                "required input is missing or unreadable",
+                path=path,
+            ),
+        )
+    for script_name in _SCRIPT_NAMES:
+        script_path = context.project_root / "scripts" / script_name
+        checks.append(
+            _check(
+                f"script.{script_path.stem}",
+                script_path.is_file() and os.access(script_path, os.R_OK),
+                "pipeline CLI is available",
+                "pipeline CLI is missing or unreadable",
+                path=script_path,
+            ),
+        )
+    optional_modules = {
+        "numpy": "numpy",
+        "sentence_transformers": "sentence_transformers",
+        "umap": "umap",
+        "hdbscan": "hdbscan",
+        "bertopic": "bertopic",
+        "sklearn": "sklearn",
+        "scipy": "scipy",
+    }
+    for code, module in optional_modules.items():
+        checks.append(
+            _check(
+                f"dependency.{code}",
+                importlib.util.find_spec(module) is not None,
+                "analysis dependency is installed",
+                "analysis dependency is not installed",
+            ),
+        )
+    writable_parent = _nearest_existing_parent(context.run_dir)
+    checks.append(
+        _check(
+            "filesystem.runs_root",
+            writable_parent.is_dir() and os.access(writable_parent, os.W_OK | os.X_OK),
+            "nearest existing run parent is writable",
+            "no writable existing parent is available for the run directory",
+            path=writable_parent,
+        ),
+    )
+    available = _available_disk_gb(context.run_dir)
+    checks.append(
+        _check(
+            "filesystem.free_space",
+            available is not None and available >= config.minimum_free_gb,
+            f"available disk space satisfies the {config.minimum_free_gb:.1f} GiB minimum",
+            f"available disk space is below the {config.minimum_free_gb:.1f} GiB minimum",
+            path=writable_parent,
+        ),
+    )
+    return checks, available
+
+
+def _dataset_dry_run(config: PipelineConfig) -> tuple[DryRunDatasetSummary | None, list[DryRunCheck]]:
+    path = config.source_dataset
+    if not path.is_file() or not os.access(path, os.R_OK):
+        return None, []
+    try:
+        format_result = detect_dataset_format(path)
+        digest = hashlib.sha256()
+        lines_total = 0
+        non_empty_records = 0
+        sampled = 0
+        structural_errors = 0
+        with path.open("rb") as source:
+            for raw_line in source:
+                digest.update(raw_line)
+                lines_total += 1
+                if not raw_line.strip():
+                    continue
+                non_empty_records += 1
+                if sampled >= _DRY_RUN_STRUCTURE_SAMPLE:
+                    continue
+                sampled += 1
+                try:
+                    value = json.loads(raw_line.decode("utf-8-sig"))
+                    ExportedComment.model_validate(value)
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                    structural_errors += 1
+    except OSError:
+        return None, [
+            DryRunCheck(
+                code="dataset.inspection",
+                status=DryRunStatus.BLOCKED,
+                message="dataset inspection failed without exposing record content",
+                path=str(path),
+            ),
+        ]
+    expected_matches = True
+    if config.expected_records is not None:
+        difference = abs(non_empty_records - config.expected_records) / config.expected_records
+        expected_matches = difference <= _EXPECTED_RECORDS_TOLERANCE
+    usable = format_result.matches and structural_errors == 0 and expected_matches
+    summary = DryRunDatasetSummary(
+        path=str(path),
+        size_bytes=path.stat().st_size,
+        sha256=digest.hexdigest(),
+        lines_total=lines_total,
+        non_empty_records=non_empty_records,
+        expected_records=config.expected_records,
+        expected_format=format_result.expected.value,
+        detected_format=format_result.detected.value,
+        format_matches=format_result.matches,
+        usable=usable,
+        structural_errors=structural_errors,
+    )
+    checks = [
+        _check(
+            "dataset.format",
+            format_result.matches and format_result.detected == DatasetFormat.JSONL,
+            "dataset matches the expected JSONL format",
+            f"expected JSONL but detected {format_result.detected.value}",
+            path=path,
+        ),
+        _check(
+            "dataset.contract",
+            usable,
+            "sampled dataset structure and record-count expectation are usable",
+            "dataset structure or record-count expectation blocks the pipeline",
+            path=path,
+        ),
+    ]
+    return summary, checks
+
+
+def _preflight(config: PipelineConfig, project_root: Path, run_dir: Path) -> None:
+    if sys.version_info < (3, 11) or sys.version_info >= (3, 13):
+        msg = "ML pipeline requires Python >=3.11,<3.13"
+        raise RuntimeError(msg)
+    missing = [str(path) for path in _required_files(config) if not path.is_file()]
     if missing:
         msg = f"pipeline preflight found missing files: {', '.join(missing)}"
         raise FileNotFoundError(msg)
@@ -428,6 +735,211 @@ def _new_run_id() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _resume_plan(
+    config: PipelineConfig,
+    context: PipelineContext,
+) -> tuple[dict[PipelineStage, StageRecord], list[DryRunCheck]]:
+    if not context.resume:
+        check = _check(
+            "run.directory",
+            not context.run_dir.exists(),
+            "new run directory is available",
+            "new run directory already exists",
+            path=context.run_dir,
+        )
+        return {}, [check]
+    manifest_path = context.run_dir / "run-manifest.json"
+    if not manifest_path.is_file():
+        return {}, [
+            DryRunCheck(
+                code="resume.manifest",
+                status=DryRunStatus.BLOCKED,
+                message="resume requires an existing run manifest",
+                path=str(manifest_path),
+            ),
+        ]
+    try:
+        manifest = PipelineRunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, [
+            DryRunCheck(
+                code="resume.manifest",
+                status=DryRunStatus.BLOCKED,
+                message="run manifest failed validation without exposing its content",
+                path=str(manifest_path),
+            ),
+        ]
+    checks = [
+        _check(
+            "resume.run_id",
+            manifest.run_id == context.run_id,
+            "resume run ID matches",
+            "resume run ID does not match",
+            path=manifest_path,
+        ),
+        _check(
+            "resume.dataset",
+            config.source_dataset.is_file()
+            and manifest.source_dataset_sha256 == _sha256_file(config.source_dataset),
+            "source dataset checksum matches the recorded run",
+            "source dataset checksum does not match the recorded run",
+            path=config.source_dataset,
+        ),
+    ]
+    config_path = Path(manifest.config_snapshot_path)
+    checks.append(
+        _check(
+            "resume.config_snapshot",
+            config_path.is_file() and manifest.config_snapshot_sha256 == _sha256_file(config_path),
+            "recorded configuration snapshot is intact",
+            "recorded configuration snapshot changed or is missing",
+            path=config_path,
+        ),
+    )
+    completed: dict[PipelineStage, StageRecord] = {}
+    for record in manifest.stages:
+        if record.status != StageStatus.COMPLETED:
+            continue
+        marker = Path(record.marker_path)
+        valid = marker.is_file() and record.marker_sha256 == _sha256_file(marker)
+        checks.append(
+            _check(
+                f"resume.marker.{record.stage.value}",
+                valid,
+                "completed stage marker checksum matches",
+                "completed stage marker changed or is missing",
+                path=marker,
+            ),
+        )
+        if valid:
+            completed[record.stage] = record
+    return completed, checks
+
+
+def _manual_gate_check(config: PipelineConfig) -> tuple[DryRunCheck, bool]:
+    try:
+        evaluation = EvaluationConfig.model_validate_json(config.evaluation_config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return (
+            DryRunCheck(
+                code="evaluation.manual_gate",
+                status=DryRunStatus.BLOCKED,
+                message="evaluation configuration cannot be validated",
+                path=str(config.evaluation_config),
+            ),
+            True,
+        )
+    awaiting = config.manual_annotations is None or not evaluation.validation_completed
+    return (
+        DryRunCheck(
+            code="evaluation.manual_gate",
+            status=DryRunStatus.WARNING if awaiting else DryRunStatus.READY,
+            message=(
+                "pipeline is expected to pause for manual review"
+                if awaiting
+                else "manual annotations and validation completion are configured"
+            ),
+            path=str(config.evaluation_config),
+        ),
+        awaiting,
+    )
+
+
+def dry_run_pipeline(
+    config: PipelineConfig,
+    project_root: Path,
+    *,
+    config_path: Path | None = None,
+    run_dir: Path | None = None,
+    resume: bool = False,
+    restart_from: PipelineStage | None = None,
+    stop_after: PipelineStage | None = None,
+) -> PipelineDryRunReport:
+    """Build a full read-only execution plan without creating files or running processes."""
+    context = _pipeline_context(
+        config,
+        project_root,
+        run_dir=run_dir,
+        resume=resume,
+        restart_from=restart_from,
+        stop_after=stop_after,
+    )
+    checks, available = _environment_checks(config, context)
+    dataset, dataset_checks = _dataset_dry_run(config)
+    checks.extend(dataset_checks)
+    completed, resume_checks = _resume_plan(config, context)
+    checks.extend(resume_checks)
+    gate_check, awaiting_review = _manual_gate_check(config)
+    checks.append(gate_check)
+    blocked_codes = [check.code for check in checks if check.status == DryRunStatus.BLOCKED]
+    restart_index = list(PipelineStage).index(restart_from) if restart_from is not None else None
+    stages = []
+    for index, stage in enumerate(PipelineStage):
+        force = restart_index is not None and index >= restart_index
+        if stage in completed and not force:
+            action = DryRunStageAction.SKIP
+            reason = "completed marker checksum is verified"
+        elif blocked_codes:
+            action = DryRunStageAction.BLOCKED
+            reason = "one or more read-only preflight checks failed"
+        elif force:
+            action = DryRunStageAction.RESTART
+            reason = "selected by restart-from; existing outputs will require --force"
+        else:
+            action = DryRunStageAction.RUN
+            reason = "no verified completed marker"
+        command = _command(stage, config, context.project_root, context.stage_dirs, force=force)
+        input_paths = sorted(
+            {
+                token
+                for token in command
+                if not token.startswith("-") and Path(token).exists() and Path(token).is_file()
+            },
+        )
+        stages.append(
+            DryRunStageResult(
+                number=index + 1,
+                stage=stage,
+                action=action,
+                reason=reason,
+                command=command,
+                input_paths=input_paths,
+                output_paths=[str(context.markers[stage])],
+                requires_force=force and stage != PipelineStage.INSPECTION,
+                blocking_checks=blocked_codes,
+            ),
+        )
+        if stop_after == stage:
+            break
+    if blocked_codes:
+        status = DryRunStatus.BLOCKED
+    elif any(check.status == DryRunStatus.WARNING for check in checks):
+        status = DryRunStatus.WARNING
+    else:
+        status = DryRunStatus.READY
+    real_config = str(config_path) if config_path is not None else "<pipeline-config.json>"
+    real_command = [str(config.python_executable), "scripts/run_ml_pipeline.py", "run", real_config]
+    if run_dir is not None:
+        real_command.extend(["--run-dir", str(run_dir)])
+    if resume:
+        real_command.append("--resume")
+    if restart_from is not None:
+        real_command.extend(["--restart-from", restart_from.value])
+    if stop_after is not None:
+        real_command.extend(["--stop-after", stop_after.value])
+    return PipelineDryRunReport(
+        status=status,
+        run_id=context.run_id,
+        run_dir=str(context.run_dir),
+        dataset=dataset,
+        available_disk_gb=available,
+        checks=checks,
+        stages=stages,
+        awaiting_review_expected=awaiting_review,
+        real_command=real_command,
+    )
+
+
 def _evaluation_status(stage_dirs: dict[PipelineStage, Path]) -> tuple[EvaluationStatus, bool]:
     path = stage_dirs[PipelineStage.EVALUATION] / "evaluation-metrics.json"
     metrics = EvaluationMetrics.model_validate_json(path.read_text(encoding="utf-8"))
@@ -445,13 +957,18 @@ def run_pipeline(
     executor: StageExecutor = _default_executor,
 ) -> PipelineRunManifest:
     """Run stages in order, preserving checksummed resume state after every process."""
-    resolved_root = project_root.resolve()
-    run_id = config.run_id or (run_dir.name if run_dir is not None else _new_run_id())
-    if not _RUN_ID_PATTERN.fullmatch(run_id):
-        msg = "run_id contains unsafe characters"
-        raise ValueError(msg)
-    active_run_dir = (run_dir or config.runs_root / run_id).resolve()
-    _preflight(config, resolved_root, active_run_dir)
+    context = _pipeline_context(
+        config,
+        project_root,
+        run_dir=run_dir,
+        resume=resume,
+        restart_from=restart_from,
+        stop_after=stop_after,
+    )
+    resolved_root = context.project_root
+    run_id = context.run_id
+    active_run_dir = context.run_dir
+    _preflight(config, context.project_root, context.run_dir)
     manifest_path = active_run_dir / "run-manifest.json"
     config_path = active_run_dir / "pipeline-config.json"
     if active_run_dir.exists() and not resume:
@@ -477,8 +994,8 @@ def run_pipeline(
         records = []
         created_at = now
     config_hash = _sha256_file(config_path)
-    stage_dirs = _paths(active_run_dir)
-    markers = _markers(stage_dirs)
+    stage_dirs = context.stage_dirs
+    markers = context.markers
     completed = {record.stage: record for record in records if record.status == StageStatus.COMPLETED}
     if resume:
         for stage, record in completed.items():

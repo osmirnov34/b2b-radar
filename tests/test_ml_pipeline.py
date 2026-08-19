@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from src.ml.evaluation import (
     EvaluationMetrics,
     EvaluationStatus,
@@ -10,9 +12,12 @@ from src.ml.evaluation import (
 )
 from src.ml.export import ExportConfig, export_topic_results
 from src.operations.ml_pipeline import (
+    DryRunStageAction,
+    DryRunStatus,
     PipelineConfig,
     PipelineStage,
     PipelineStatus,
+    dry_run_pipeline,
     publish_snapshot,
     rollback_snapshot,
     run_pipeline,
@@ -31,7 +36,18 @@ def _config(tmp_path: Path, *, run_id: str = "test-run") -> PipelineConfig:
         run_id=run_id,
         python_executable=Path(sys.executable),
         minimum_free_gb=0,
+        expected_records=1,
     )
+
+
+def _filesystem_snapshot(root: Path) -> dict[str, tuple[str, int, int, str | None]]:
+    result = {}
+    for path in sorted(root.rglob("*")):
+        stat = path.lstat()
+        kind = "symlink" if path.is_symlink() else ("file" if path.is_file() else "directory")
+        target = str(path.readlink()) if path.is_symlink() else None
+        result[str(path.relative_to(root))] = (kind, stat.st_size, stat.st_mtime_ns, target)
+    return result
 
 
 def _marker_for_script(script_name: str, output: Path) -> Path:
@@ -113,6 +129,64 @@ def test_pipeline_runs_partially_and_resumes_only_verified_stages(tmp_path: Path
     )
     assert [record.stage for record in resumed.stages] == list(PipelineStage)[:11]
     assert len(list(run_dir.glob("pipeline-config*.json"))) == 2
+
+
+def test_dry_run_is_read_only_and_builds_commands_without_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path, run_id="dry-run")
+    before = _filesystem_snapshot(tmp_path)
+
+    def forbidden_subprocess(*_args: object, **_kwargs: object) -> None:
+        msg = "dry-run must not launch subprocesses"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("src.operations.ml_pipeline.subprocess.run", forbidden_subprocess)
+    report = dry_run_pipeline(config, PROJECT_ROOT)
+
+    assert _filesystem_snapshot(tmp_path) == before
+    assert not (tmp_path / "runs" / "dry-run").exists()
+    assert report.dataset is not None
+    assert report.dataset.detected_format == "jsonl"
+    assert report.dataset.non_empty_records == 1
+    assert report.awaiting_review_expected is True
+    assert len(report.stages) == 13
+    assert report.status in {DryRunStatus.READY, DryRunStatus.WARNING, DryRunStatus.BLOCKED}
+    dedup = next(stage for stage in report.stages if stage.stage == PipelineStage.DEDUPLICATION)
+    assert dedup.command.count("--output-dir") == 1
+    assert "Useful CRM workflow" not in report.model_dump_json()
+
+
+def test_dry_run_safely_reports_wrong_dataset_format(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="wrong-format")
+    config.source_dataset.write_text("comment_text,video_id\nsecret value,v1\n")
+
+    report = dry_run_pipeline(config, PROJECT_ROOT)
+
+    assert report.status == DryRunStatus.BLOCKED
+    assert report.dataset is not None
+    assert report.dataset.detected_format == "csv"
+    assert all(stage.action == DryRunStageAction.BLOCKED for stage in report.stages)
+    serialized = report.model_dump_json()
+    assert "secret value" not in serialized
+
+
+def test_dry_run_resume_marks_verified_stages_without_changing_run(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="resume-dry-run")
+    run_dir = tmp_path / "runs" / "resume-dry-run"
+    run_pipeline(
+        config,
+        PROJECT_ROOT,
+        stop_after=PipelineStage.CLEANING,
+        executor=_successful_executor,
+    )
+    before = _filesystem_snapshot(run_dir)
+
+    report = dry_run_pipeline(config, PROJECT_ROOT, run_dir=run_dir, resume=True)
+
+    assert _filesystem_snapshot(run_dir) == before
+    assert [stage.action for stage in report.stages[:4]] == [DryRunStageAction.SKIP] * 4
 
 
 def test_pipeline_stops_at_manual_review_gate_and_records_safe_logs(tmp_path: Path) -> None:
