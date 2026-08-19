@@ -86,6 +86,7 @@ ignore = [
 "src/ml/evaluation.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "S105"]
 "src/ml/export.py" = ["C901", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "TRY301"]
 "src/web/ml_snapshot.py" = ["C901"]
+"src/operations/ml_pipeline.py" = ["C901", "PLR0912", "PLR0913", "PLR0915"]
 "src/web/routers/*" = ["PLR0913", "PLR0917"]
 
 [tool.mypy]

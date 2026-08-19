@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "source_dataset": "data/raw/comments.jsonl",
+  "runs_root": "data/ml-runs",
+  "run_id": null,
+  "python_executable": ".venv/bin/python",
+  "minimum_free_gb": 5.0,
+  "expected_records": 260000,
+  "cleaning_config": "configs/dataset-cleaning.example.json",
+  "embeddings_config": "configs/embeddings.example.json",
+  "deduplication_config": "configs/semantic-deduplication.example.json",
+  "umap_config": "configs/umap.example.json",
+  "clustering_config": "configs/hdbscan.example.json",
+  "topics_config": "configs/topic-representation.example.json",
+  "reassignment_config": "configs/outlier-reassignment.example.json",
+  "evaluation_config": "configs/evaluation.example.json",
+  "export_config": "configs/export.example.json",
+  "manual_annotations": null
+}

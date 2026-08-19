@@ -82,6 +82,8 @@ The same guide covers privacy-safe development EDA, explicit comment/reply text 
 in `notebooks/01_development_eda.ipynb`.
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
+The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,
+and CI smoke checks are documented in [`docs/ml-operations.md`](docs/ml-operations.md).
 
 ### Deployment (Caddy + HTTP Basic Auth)
 
