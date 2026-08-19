@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Кластеры{% endblock %}
 {% block page_title %}Анализ кластеров{% endblock %}
-{% block page_subtitle %}История загруженных прогонов кластеризации — результаты <code>mine_topics.py</code>{% endblock %}
+{% block page_subtitle %}Архив ранее загруженных результатов кластеризации{% endblock %}
 
 {% block topbar_actions %}
 <button class="btn btn-primary" onclick="openModal('modal-upload-run')">
@@ -59,7 +59,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="7"><div class="empty-state"><div class="empty-state-title">Пока нет загруженных прогонов</div>Запустите <code>mine_topics.py</code> и загрузите получившийся <code>clusters.jsonl</code></div></td></tr>
+        <tr><td colspan="7"><div class="empty-state"><div class="empty-state-title">Пока нет загруженных прогонов</div>Здесь отображаются ранее созданные совместимые файлы <code>clusters.jsonl</code>. Новые результаты публикуются через ML snapshot.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

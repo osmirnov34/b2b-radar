@@ -1,7 +1,7 @@
 # Stage 6: semantic deduplication
 
 This stage groups cleaned text units whose normalized embeddings have cosine similarity at or above a
-model-specific threshold. It replaces the former blockwise all-pairs scan in `scripts/mine_topics.py` with HNSW
+model-specific threshold. It replaces the removed legacy blockwise all-pairs implementation with HNSW
 candidate search, avoiding `O(n²)` similarity work on the full corpus.
 
 ## Structure

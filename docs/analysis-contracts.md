@@ -1,7 +1,9 @@
 # Analysis data contracts
 
-The offline topic-analysis workflow exchanges three versioned formats. Their executable Pydantic definitions live in
-`src/ml/schemas.py`; fixtures in `tests/fixtures/` are canonical examples.
+The maintained pipeline accepts a versioned comments export, creates stage-specific manifests, and publishes the
+strict contracts described in `export.md`. This document also records the compatibility-only `clusters.jsonl` and
+`run_meta.json` formats still accepted by the historical `/analysis` upload page. Their executable Pydantic definitions
+live in `src/ml/schemas.py`; fixtures in `tests/fixtures/` are canonical reader examples.
 
 Readers ignore unknown fields for forward compatibility. Producers must preserve the required fields and their
 meaning. Text is UTF-8 in every format.
@@ -37,9 +39,10 @@ hash. Author, timestamp, likes, and source provenance are optional and never det
 `text`. The original supports audit and provenance; only `clean_text` is intended for embeddings. Exact duplicates are
 represented once, and `duplicate_count` records the normalized group size.
 
-## Cluster output (`clusters.jsonl`)
+## Historical cluster import (`clusters.jsonl`)
 
-One non-outlier topic per line. This is the file accepted by the `/analysis` upload page.
+One non-outlier topic per line. This compatibility format is accepted by `/analysis` for existing results but is no
+longer produced by a supported repository command. New integrations consume the stage-13 snapshot.
 
 | Field | Type | Constraint |
 |---|---|---|
@@ -53,7 +56,7 @@ One non-outlier topic per line. This is the file accepted by the `/analysis` upl
 Each comment contains required `text` plus optional `author`, `channel`, `query`, `video_id`, `video_title`, and
 `video_url` strings. Keeping provenance inside the record lets the web viewer render a cluster without joins.
 
-## Run metadata (`run_meta.json`)
+## Historical run metadata (`run_meta.json`)
 
 A single JSON object stored beside `clusters.jsonl`. `schema_version` is currently `1`; legacy files without this field
 are interpreted as version 1.
@@ -73,5 +76,6 @@ counts are non-negative.
 
 - Additive fields do not require a schema-version increment.
 - Renaming/removing fields or changing their meaning requires a new schema version and a migration path.
-- The CLI producer, Pydantic contracts, fixtures, and `/analysis` parser are covered by contract tests and must change
+- The compatibility Pydantic contracts, fixtures, and `/analysis` parser are covered by reader tests and must change
   together.
+- No maintained CLI may produce the historical format or import its removed monolithic configuration.

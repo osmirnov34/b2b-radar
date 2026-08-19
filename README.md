@@ -62,20 +62,17 @@ Related tables can share one migration (e.g. FK dependencies) as long as `upgrad
 
 ### Offline topic analysis
 
-Install the optional ML stack and run the topic-mining script against an exported comments JSONL:
+Install the optional ML stack and validate the versioned pipeline configuration against an exported comments JSONL:
 
 ```bash
 uv sync --extra analysis
-uv run python scripts/mine_topics.py comments.jsonl --out-dir docs/analysis-output
+uv run python scripts/run_ml_pipeline.py dry-run configs/pipeline.example.json
 ```
 
-The generated `clusters.jsonl` can be uploaded on `/analysis`. Embedding models are downloaded on first use.
-The JSONL and run-metadata formats are documented in [`docs/analysis-contracts.md`](docs/analysis-contracts.md).
-Typed runtime parameters and notebook usage are documented in
-[`docs/analysis-configuration.md`](docs/analysis-configuration.md); a complete JSON example is available at
-[`configs/topic-analysis.example.json`](configs/topic-analysis.example.json).
-The separation between persisted contracts and internal analysis objects is described in
-[`docs/analysis-models.md`](docs/analysis-models.md).
+The supported workflow is `dry-run` → `smoke-run` → `run` → manual evaluation → export → publish. Embedding models
+are downloaded on first use. Input, historical-import, and current stage contracts are documented in
+[`docs/analysis-contracts.md`](docs/analysis-contracts.md); typed stage configuration is described in
+[`docs/analysis-configuration.md`](docs/analysis-configuration.md).
 Instructions for validating, sampling, and splitting the full corpus without source-group leakage are in
 [`docs/dataset-preparation.md`](docs/dataset-preparation.md).
 The same guide covers privacy-safe development EDA, explicit comment/reply text units, cleaning, and the thin notebook

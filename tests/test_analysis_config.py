@@ -3,39 +3,20 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.ml import (
-    AnalysisConfig,
-    CleaningConfig,
-    ClusteringConfig,
-    DeduplicationConfig,
-    EmbeddingConfig,
-    load_analysis_config,
-    save_analysis_config,
-)
+from src.ml import CleaningConfig, DeduplicationConfig, EmbeddingConfig
 
-EXAMPLE_CONFIG = Path(__file__).parents[1] / "configs" / "topic-analysis.example.json"
 SEMANTIC_DEDUP_CONFIG = Path(__file__).parents[1] / "configs" / "semantic-deduplication.example.json"
 DATASET_CLEANING_CONFIG = Path(__file__).parents[1] / "configs" / "dataset-cleaning.example.json"
+EMBEDDINGS_CONFIG = Path(__file__).parents[1] / "configs" / "embeddings.example.json"
 
 
-def test_analysis_config_defaults() -> None:
-    config = AnalysisConfig(input_path=Path("comments.jsonl"))
-
-    assert config.embedding.model_name == "intfloat/multilingual-e5-large"
-    assert config.embedding.batch_size == 64
-    assert config.deduplication.enabled is True
-    assert config.clustering.reduce_outliers is True
-    assert config.limit is None
-    assert config.sample_size is None
-
-
-def test_config_models_are_immutable_and_forbid_extra_fields() -> None:
-    config = AnalysisConfig(input_path=Path("comments.jsonl"))
+def test_stage_config_models_are_immutable_and_forbid_extra_fields() -> None:
+    config = EmbeddingConfig()
 
     with pytest.raises(ValidationError, match="frozen"):
-        config.limit = 10
+        config.batch_size = 10
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        AnalysisConfig.model_validate({"input_path": "comments.jsonl", "unknown": True})
+        EmbeddingConfig.model_validate({"unknown": True})
 
 
 @pytest.mark.parametrize("threshold", [-0.01, 1.01])
@@ -52,17 +33,11 @@ def test_deduplication_ann_defaults_are_production_safe() -> None:
     assert config.separate_text_kinds is True
 
 
-def test_config_rejects_invalid_operational_ranges() -> None:
+def test_stage_configs_reject_invalid_operational_ranges() -> None:
     with pytest.raises(ValidationError):
         EmbeddingConfig(threads=0)
     with pytest.raises(ValidationError):
         DeduplicationConfig(block_size=0)
-    with pytest.raises(ValidationError):
-        ClusteringConfig(min_topic_size=1)
-    with pytest.raises(ValidationError):
-        AnalysisConfig(input_path=Path("comments.jsonl"), limit=0)
-    with pytest.raises(ValidationError):
-        AnalysisConfig(input_path=Path("comments.jsonl"), sample_size=0)
 
 
 def test_embedding_model_name_is_trimmed_and_cannot_be_blank() -> None:
@@ -71,34 +46,11 @@ def test_embedding_model_name_is_trimmed_and_cannot_be_blank() -> None:
         EmbeddingConfig(model_name="   ")
 
 
-def test_example_config_matches_contract() -> None:
-    config = load_analysis_config(EXAMPLE_CONFIG)
-
-    assert config.schema_version == 1
-    assert config.input_path == Path("data/comments.jsonl")
-
-
 def test_stage_specific_example_configs_match_contracts() -> None:
     cleaning = CleaningConfig.model_validate_json(DATASET_CLEANING_CONFIG.read_text(encoding="utf-8"))
     deduplication = DeduplicationConfig.model_validate_json(SEMANTIC_DEDUP_CONFIG.read_text(encoding="utf-8"))
+    embedding = EmbeddingConfig.model_validate_json(EMBEDDINGS_CONFIG.read_text(encoding="utf-8"))
 
     assert cleaning.url_handling == "token"
     assert deduplication.backend == "hnsw"
-
-
-def test_config_json_round_trip(tmp_path: Path) -> None:
-    source = AnalysisConfig(
-        input_path=Path("comments.jsonl"),
-        limit=100,
-        embedding=EmbeddingConfig(model_name="deepvk/USER-bge-m3", batch_size=16),
-    )
-    path = tmp_path / "nested" / "analysis.json"
-
-    save_analysis_config(source, path)
-
-    assert load_analysis_config(path) == source
-
-
-def test_config_rejects_unsupported_schema_version() -> None:
-    with pytest.raises(ValidationError, match="unsupported analysis config schema_version"):
-        AnalysisConfig(input_path=Path("comments.jsonl"), schema_version=2)
+    assert embedding.model_name == "intfloat/multilingual-e5-large"

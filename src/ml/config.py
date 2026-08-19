@@ -1,9 +1,6 @@
-from pathlib import Path
-from typing import Literal, Self
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from src.ml.schemas import ANALYSIS_SCHEMA_VERSION
 
 
 class _ConfigModel(BaseModel):
@@ -84,47 +81,3 @@ class DeduplicationConfig(_ConfigModel):
     ann_m: int = Field(default=16, ge=2)
     random_seed: int = 42
     separate_text_kinds: bool = True
-
-
-class ClusteringConfig(_ConfigModel):
-    min_topic_size: int = Field(default=250, ge=2)
-    reduce_outliers: bool = True
-    reduce_outliers_threshold: float = Field(default=0.9, ge=0, le=1)
-    random_seed: int = 42
-    top_n: int = Field(default=50, ge=0)
-
-
-class AnalysisConfig(_ConfigModel):
-    schema_version: int = ANALYSIS_SCHEMA_VERSION
-    input_path: Path
-    output_dir: Path = Path("docs/analysis-output")
-    limit: int | None = Field(default=None, ge=1)
-    sample_size: int | None = Field(default=None, ge=1)
-    cleaning: CleaningConfig = Field(default_factory=CleaningConfig)
-    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
-    deduplication: DeduplicationConfig = Field(default_factory=DeduplicationConfig)
-    clustering: ClusteringConfig = Field(default_factory=ClusteringConfig)
-
-    @field_validator("schema_version")
-    @classmethod
-    def validate_schema_version(cls, value: int) -> int:
-        if value != ANALYSIS_SCHEMA_VERSION:
-            msg = f"unsupported analysis config schema_version={value}; expected {ANALYSIS_SCHEMA_VERSION}"
-            raise ValueError(msg)
-        return value
-
-    @classmethod
-    def load_json(cls, path: Path) -> Self:
-        return cls.model_validate_json(path.read_text(encoding="utf-8"))
-
-    def save_json(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{self.model_dump_json(indent=2)}\n", encoding="utf-8")
-
-
-def load_analysis_config(path: Path) -> AnalysisConfig:
-    return AnalysisConfig.load_json(path)
-
-
-def save_analysis_config(config: AnalysisConfig, path: Path) -> None:
-    config.save_json(path)

@@ -2,8 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.ml.config import AnalysisConfig
-from src.ml.schemas import AnalysisRunMetadata, ClusterComment, ClusterRecord, ExportedComment
+from src.ml.schemas import ClusterComment, ExportedComment
 
 
 class _InternalModel(BaseModel):
@@ -174,58 +173,5 @@ class DeduplicationResult(_InternalModel):
             raise ValueError(msg)
         if len(self.keep_indices) != self.stats.n_kept:
             msg = "keep indices length must match deduplication n_kept"
-            raise ValueError(msg)
-        return self
-
-
-class TopicAssignment(_InternalModel):
-    comment_index: int = Field(ge=0)
-    topic_id: int = Field(ge=-1)
-    confidence: float | None = Field(default=None, ge=0, le=1)
-    reassigned_from_outlier: bool = False
-
-
-class TopicSummary(_InternalModel):
-    topic_id: int = Field(ge=0)
-    keywords: list[str] = Field(default_factory=list)
-    comment_indices: list[int] = Field(default_factory=list)
-    n_authors: int = Field(ge=0)
-    n_channels: int = Field(ge=0)
-
-
-class AnalysisCounts(_InternalModel):
-    n_input: int = Field(ge=0)
-    n_after_clean: int = Field(ge=0)
-    n_after_dedup: int = Field(ge=0)
-    n_topics: int = Field(ge=0)
-    n_outliers_before_reduction: int = Field(ge=0)
-    n_outliers: int = Field(ge=0)
-
-    @model_validator(mode="after")
-    def validate_counts(self) -> "AnalysisCounts":
-        if self.n_after_clean > self.n_input:
-            msg = "n_after_clean cannot exceed n_input"
-            raise ValueError(msg)
-        if self.n_after_dedup > self.n_after_clean:
-            msg = "n_after_dedup cannot exceed n_after_clean"
-            raise ValueError(msg)
-        if self.n_outliers > self.n_outliers_before_reduction:
-            msg = "n_outliers cannot exceed n_outliers_before_reduction"
-            raise ValueError(msg)
-        return self
-
-
-class AnalysisResult(_InternalModel):
-    config: AnalysisConfig
-    comments: list[CommentRecord]
-    topics: list[int]
-    counts: AnalysisCounts
-    clusters: list[ClusterRecord]
-    metadata: AnalysisRunMetadata
-
-    @model_validator(mode="after")
-    def validate_topic_assignments(self) -> "AnalysisResult":
-        if len(self.topics) != len(self.comments):
-            msg = "topics length must match comments length"
             raise ValueError(msg)
         return self

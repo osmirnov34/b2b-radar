@@ -1350,6 +1350,7 @@ def _resource_estimate(config: PipelineConfig, records: int) -> DryRunResourceEs
     """Return conservative, model-independent storage figures without initializing a GPU."""
     dimensions = 1024
     embeddings_gb = records * dimensions * 4 / 1024**3
+    requested_device: str
     try:
         pages = os.sysconf("SC_PHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")

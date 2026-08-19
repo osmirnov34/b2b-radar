@@ -178,7 +178,7 @@ class ClusterComment(_ContractModel):
 
 
 class ClusterRecord(_ContractModel):
-    """One non-outlier topic written as a line of clusters.jsonl."""
+    """Compatibility-only record for read-only imports of historical clusters.jsonl."""
 
     topic_id: int = Field(ge=0)
     n_comments: int = Field(ge=0)
@@ -196,7 +196,7 @@ class ClusterRecord(_ContractModel):
 
 
 class AnalysisRunMetadata(_ContractModel):
-    """Reproducibility metadata persisted alongside clusters.jsonl."""
+    """Compatibility-only metadata for historical clusters.jsonl runs."""
 
     schema_version: int = Field(default=ANALYSIS_SCHEMA_VERSION, ge=1)
     model: str = Field(min_length=1)
