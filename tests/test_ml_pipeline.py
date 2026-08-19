@@ -1,5 +1,6 @@
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -18,11 +19,14 @@ from src.operations.ml_pipeline import (
     PipelineConfig,
     PipelineStage,
     PipelineStatus,
+    create_smoke_sample,
     dry_run_pipeline,
     publish_snapshot,
     render_dry_run_report,
+    render_smoke_run_report,
     rollback_snapshot,
     run_pipeline,
+    run_smoke_pipeline,
 )
 from tests.test_evaluation import _run_evaluation
 
@@ -172,6 +176,61 @@ def test_dry_run_report_is_actionable_and_does_not_render_comment_text(tmp_path:
     assert "scripts/run_ml_pipeline.py run" in rendered
     assert "Useful CRM workflow" not in rendered
     assert report.can_run is (report.status != DryRunStatus.BLOCKED)
+
+
+def test_smoke_sample_is_deterministic_and_keeps_video_groups_whole(tmp_path: Path) -> None:
+    source = tmp_path / "comments.jsonl"
+    rows = [
+        {"comment_text": f"Comment {index}", "comment_id": str(index), "video_id": f"v{index // 4}"}
+        for index in range(40)
+    ]
+    source.write_text("".join(f"{json.dumps(row)}\n" for row in rows))
+
+    first = create_smoke_sample(source, tmp_path / "first" / "sample.jsonl", records=20, seed=17)
+    second = create_smoke_sample(source, tmp_path / "second" / "sample.jsonl", records=20, seed=17)
+
+    assert first.sample_sha256 == second.sample_sha256
+    assert first.selected_records >= 20
+    assert first.selected_records % 4 == 0
+    selected = [json.loads(line) for line in (tmp_path / "first" / "sample.jsonl").read_text().splitlines()]
+    counts = Counter(row["video_id"] for row in selected)
+    assert set(counts.values()) == {4}
+    assert "Comment" not in first.model_dump_json()
+
+
+def test_smoke_run_stops_before_evaluation_and_is_non_publishable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "comments.jsonl"
+    rows = [
+        {"comment_text": f"Useful workflow {index}", "comment_id": str(index), "video_id": f"v{index}"}
+        for index in range(30)
+    ]
+    source.write_text(
+        "".join(f"{json.dumps(row)}\n" for row in rows),
+    )
+    config = _config(tmp_path, run_id="smoke-contract").model_copy(
+        update={"source_dataset": source, "expected_records": 30},
+    )
+    monkeypatch.setattr(
+        "src.operations.ml_pipeline.dry_run_pipeline",
+        lambda *_args, **_kwargs: type("Allowed", (), {"can_run": True})(),
+    )
+
+    report = run_smoke_pipeline(config, PROJECT_ROOT, records=20, executor=_successful_executor)
+
+    assert report.status == DryRunStatus.READY
+    assert report.pipeline_status == PipelineStatus.PARTIAL
+    assert report.sample.publishable is False
+    assert (Path(report.workspace) / "NON_PUBLISHABLE").is_file()
+    manifest = json.loads((Path(report.workspace) / "run" / "run-manifest.json").read_text())
+    assert len(manifest["stages"]) == 11
+    assert manifest["stages"][-1]["stage"] == "reassignment"
+    assert not (Path(report.workspace) / "run" / "12-evaluation").exists()
+    rendered = render_smoke_run_report(report)
+    assert "Full-run decision: allowed" in rendered
+    assert "Useful workflow" not in rendered
 
 
 def test_pipeline_cli_dry_run_and_run_refuse_blocked_input(

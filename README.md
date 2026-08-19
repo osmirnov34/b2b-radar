@@ -84,6 +84,10 @@ in `notebooks/01_development_eda.ipynb`.
 Before a real ML run, execute the notebook's mandatory preflight section or run
 `python3 scripts/run_ml_pipeline.py dry-run configs/pipeline.example.json`. A real `run` repeats the same read-only
 checks automatically and refuses to start when any check is blocked; see `docs/ml-operations.md`.
+
+For an executable wiring check before allocating a full run, use
+`python3 scripts/run_ml_pipeline.py smoke-run configs/pipeline.example.json --records 2000`. Smoke artifacts are local,
+explicitly non-publishable, and stop before manual evaluation and export.
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,

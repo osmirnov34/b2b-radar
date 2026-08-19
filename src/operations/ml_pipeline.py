@@ -18,9 +18,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src.ml.clustering import HDBSCANConfig
+from src.ml.clustering import ClusteringManifest, HDBSCANConfig
 from src.ml.config import CleaningConfig, DeduplicationConfig, EmbeddingConfig
 from src.ml.dimensionality_reduction import UMAPConfig
 from src.ml.evaluation import EvaluationConfig, EvaluationMetrics, EvaluationStatus
@@ -39,6 +40,7 @@ _DRY_RUN_STRUCTURE_SAMPLE = 100
 _EXPECTED_RECORDS_TOLERANCE = 0.10
 _COMMAND_PREFIX_LENGTH = 2
 _MINIMUM_COMMAND_LENGTH = 3
+_MINIMUM_SMOKE_RECORDS = 20
 
 
 class _PipelineModel(BaseModel):
@@ -59,6 +61,10 @@ class PipelineStage(StrEnum):
     REASSIGNMENT = "reassignment"
     EVALUATION = "evaluation"
     EXPORT = "export"
+
+
+_SMOKE_LAST_STAGE = PipelineStage.REASSIGNMENT
+_SMOKE_STAGE_COUNT = list(PipelineStage).index(_SMOKE_LAST_STAGE) + 1
 
 
 class PipelineStatus(StrEnum):
@@ -108,6 +114,15 @@ class DryRunDatasetSummary(_PipelineModel):
     structural_errors: int = Field(ge=0)
 
 
+class DryRunResourceEstimate(_PipelineModel):
+    records: int = Field(ge=0)
+    assumed_embedding_dimensions: int = Field(ge=1)
+    embeddings_gb: float = Field(ge=0)
+    estimated_working_disk_gb: float = Field(ge=0)
+    total_memory_gb: float | None = Field(default=None, ge=0)
+    gpu: str
+
+
 class DryRunStageResult(_PipelineModel):
     number: int = Field(ge=1)
     stage: PipelineStage
@@ -130,6 +145,7 @@ class PipelineDryRunReport(_PipelineModel):
     run_dir: str
     dataset: DryRunDatasetSummary | None
     available_disk_gb: float | None = Field(default=None, ge=0)
+    resources: DryRunResourceEstimate | None = None
     checks: list[DryRunCheck]
     stages: list[DryRunStageResult]
     awaiting_review_expected: bool
@@ -168,6 +184,18 @@ def render_dry_run_report(report: PipelineDryRunReport, *, verbose: bool = False
         )
     if report.available_disk_gb is not None:
         lines.append(f"Free disk: {report.available_disk_gb:.2f} GiB")
+    if report.resources is not None:
+        memory = (
+            f"{report.resources.total_memory_gb:.2f} GiB"
+            if report.resources.total_memory_gb is not None
+            else "unknown"
+        )
+        lines.append(
+            "Resources: "
+            f"embeddings≈{report.resources.embeddings_gb:.2f} GiB; "
+            f"working disk≈{report.resources.estimated_working_disk_gb:.2f} GiB; "
+            f"RAM={memory}; GPU={report.resources.gpu}",
+        )
     lines.append("Stages:")
     lines.extend(
         f"  {stage.number:02d}. {stage.stage.value}: {stage.action.value}"
@@ -237,6 +265,50 @@ class PipelineRunManifest(_PipelineModel):
     message: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class SmokeSampleManifest(_PipelineModel):
+    schema_version: int = 1
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sample_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    seed: int
+    requested_records: int = Field(ge=1)
+    selected_records: int = Field(ge=1)
+    selected_groups: int = Field(ge=1)
+    publishable: bool = False
+
+
+class SmokeRunReport(_PipelineModel):
+    schema_version: int = 1
+    status: DryRunStatus
+    workspace: str
+    sample: SmokeSampleManifest
+    pipeline_status: PipelineStatus
+    checks: list[DryRunCheck]
+    full_run_command: list[str]
+
+    @property
+    def full_run_allowed(self) -> bool:
+        return self.status != DryRunStatus.BLOCKED
+
+
+def render_smoke_run_report(report: SmokeRunReport) -> str:
+    """Render the final smoke gate without including sampled text or provenance."""
+    lines = [
+        f"Smoke-run: [{report.status.value.upper()}]",
+        f"Workspace: {report.workspace}",
+        (
+            f"Sample: {report.sample.selected_records} records in "
+            f"{report.sample.selected_groups} complete groups; sha256={report.sample.sample_sha256[:12]}..."
+        ),
+        f"Pipeline status: {report.pipeline_status.value}",
+        "Artifact checks:",
+    ]
+    lines.extend(f"  [{check.status.value.upper()}] {check.code}: {check.message}" for check in report.checks)
+    lines.append("Full-run decision: allowed" if report.full_run_allowed else "Full-run decision: blocked")
+    if report.full_run_allowed:
+        lines.append(f"Command: {shlex.join(report.full_run_command)}")
+    return "\n".join(lines)
 
 
 class PipelineContext(_PipelineModel):
@@ -1274,6 +1346,39 @@ def _final_evaluation_passes(context: PipelineContext) -> bool:
     return metrics.status == EvaluationStatus.PASS and not metrics.preliminary
 
 
+def _resource_estimate(config: PipelineConfig, records: int) -> DryRunResourceEstimate:
+    """Return conservative, model-independent storage figures without initializing a GPU."""
+    dimensions = 1024
+    embeddings_gb = records * dimensions * 4 / 1024**3
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        total_memory_gb = pages * page_size / 1024**3
+    except (OSError, ValueError):
+        total_memory_gb = None
+    try:
+        embedding = EmbeddingConfig.model_validate_json(config.embeddings_config.read_text(encoding="utf-8"))
+        requested_device = embedding.device
+    except (OSError, ValueError):
+        requested_device = "unknown"
+    if requested_device == "cpu":
+        gpu = "not requested"
+    elif Path("/dev/nvidia0").exists():
+        gpu = "NVIDIA device detected (capacity not probed)"
+    elif importlib.util.find_spec("torch") is None:
+        gpu = "not detected; torch unavailable"
+    else:
+        gpu = "not detected without device initialization"
+    return DryRunResourceEstimate(
+        records=records,
+        assumed_embedding_dimensions=dimensions,
+        embeddings_gb=embeddings_gb,
+        estimated_working_disk_gb=max(embeddings_gb * 4, config.minimum_free_gb),
+        total_memory_gb=total_memory_gb,
+        gpu=gpu,
+    )
+
+
 def dry_run_pipeline(
     config: PipelineConfig,
     project_root: Path,
@@ -1298,6 +1403,35 @@ def dry_run_pipeline(
     checks.extend(configuration_checks)
     dataset, dataset_checks = _dataset_dry_run(config)
     checks.extend(dataset_checks)
+    resources = _resource_estimate(config, dataset.non_empty_records) if dataset is not None else None
+    if resources is not None:
+        disk_constrained = available is not None and available < resources.estimated_working_disk_gb
+        memory_constrained = (
+            resources.total_memory_gb is not None
+            and resources.total_memory_gb < resources.embeddings_gb * 3
+        )
+        checks.extend(
+            [
+                DryRunCheck(
+                    code="resources.estimated_disk",
+                    status=DryRunStatus.WARNING if disk_constrained else DryRunStatus.READY,
+                    message=(
+                        "available disk is below the conservative working estimate"
+                        if disk_constrained
+                        else "available disk satisfies the conservative working estimate"
+                    ),
+                ),
+                DryRunCheck(
+                    code="resources.estimated_memory",
+                    status=DryRunStatus.WARNING if memory_constrained else DryRunStatus.READY,
+                    message=(
+                        "system RAM is below three estimated embedding matrices; batching is required"
+                        if memory_constrained
+                        else "system RAM is compatible with the coarse embedding estimate"
+                    ),
+                ),
+            ],
+        )
     checks.extend(_run_scope_checks(config, context))
     completed, failed_stage, resume_checks = _resume_plan(config, context)
     checks.extend(resume_checks)
@@ -1426,6 +1560,7 @@ def dry_run_pipeline(
         run_dir=str(context.run_dir),
         dataset=dataset,
         available_disk_gb=available,
+        resources=resources,
         checks=checks,
         stages=stages,
         awaiting_review_expected=awaiting_review,
@@ -1576,6 +1711,292 @@ def run_pipeline(
         if stop_after == stage:
             return persist(PipelineStatus.PARTIAL, None, "partial run completed at requested stage")
     return persist(PipelineStatus.COMPLETED, None, "all pipeline stages completed")
+
+
+def _smoke_group_key(comment: ExportedComment) -> str:
+    """Match the splitter's provenance priority without exposing provenance in manifests."""
+    if comment.video_id.strip():
+        return f"video_id:{comment.video_id.strip()}"
+    if comment.video_url.strip():
+        return f"video_url:{comment.video_url.strip()}"
+    channel_title = f"{comment.video_channel.strip()}\x1f{comment.video_title.strip()}"
+    if channel_title != "\x1f":
+        return f"channel_title:{channel_title}"
+    if comment.comment_id.strip():
+        return f"comment_id:{comment.comment_id.strip()}"
+    return f"record:{hashlib.sha256(comment.model_dump_json().encode()).hexdigest()}"
+
+
+def create_smoke_sample(
+    source_path: Path,
+    target_path: Path,
+    *,
+    records: int = 2_000,
+    seed: int = 42,
+) -> SmokeSampleManifest:
+    """Create a deterministic whole-group JSONL sample for a local non-public smoke run."""
+    if records < _MINIMUM_SMOKE_RECORDS:
+        msg = "smoke sample must contain at least 20 requested records"
+        raise ValueError(msg)
+    if target_path.exists():
+        msg = f"smoke sample already exists: {target_path}"
+        raise FileExistsError(msg)
+    counts: Counter[str] = Counter()
+    source_hash = hashlib.sha256()
+    with source_path.open("rb") as source:
+        for line_number, raw_line in enumerate(source, start=1):
+            source_hash.update(raw_line)
+            if not raw_line.strip():
+                continue
+            try:
+                comment = ExportedComment.model_validate_json(raw_line)
+            except ValueError as exc:
+                msg = f"invalid JSONL record at line {line_number}: {type(exc).__name__}"
+                raise ValueError(msg) from exc
+            counts[_smoke_group_key(comment)] += 1
+    ranked = sorted(counts, key=lambda key: hashlib.sha256(f"{seed}\x1f{key}".encode()).digest())
+    selected: set[str] = set()
+    selected_records = 0
+    for key in ranked:
+        selected.add(key)
+        selected_records += counts[key]
+        if selected_records >= records:
+            break
+    if not selected:
+        msg = "cannot create a smoke sample from an empty dataset"
+        raise ValueError(msg)
+    target_path.parent.mkdir(parents=True, exist_ok=False)
+    sample_hash = hashlib.sha256()
+    written = 0
+    temporary = target_path.with_suffix(f"{target_path.suffix}.tmp")
+    try:
+        with source_path.open("rb") as source, temporary.open("wb") as target:
+            for raw_line in source:
+                if not raw_line.strip():
+                    continue
+                comment = ExportedComment.model_validate_json(raw_line)
+                if _smoke_group_key(comment) not in selected:
+                    continue
+                target.write(raw_line)
+                sample_hash.update(raw_line)
+                written += 1
+        temporary.replace(target_path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return SmokeSampleManifest(
+        source_sha256=source_hash.hexdigest(),
+        sample_sha256=sample_hash.hexdigest(),
+        seed=seed,
+        requested_records=records,
+        selected_records=written,
+        selected_groups=len(selected),
+    )
+
+
+def _write_smoke_configs(config: PipelineConfig, directory: Path, records: int) -> PipelineConfig:
+    directory.mkdir()
+    embedding = EmbeddingConfig.model_validate_json(config.embeddings_config.read_text(encoding="utf-8"))
+    umap = UMAPConfig.model_validate_json(config.umap_config.read_text(encoding="utf-8"))
+    clustering = HDBSCANConfig.model_validate_json(config.clustering_config.read_text(encoding="utf-8"))
+    embedding_path = directory / "embeddings.json"
+    umap_path = directory / "umap.json"
+    clustering_path = directory / "hdbscan.json"
+    smoke_embedding = embedding.model_copy(update={"batch_size": min(embedding.batch_size, 16)})
+    smoke_umap = umap.model_copy(
+        update={
+            "training_sample_size": records,
+            "trustworthiness_sample_size": min(records, 500),
+        },
+    )
+    smoke_clustering = clustering.model_copy(
+        update={
+            "min_cluster_size": max(2, min(clustering.min_cluster_size, records // _MINIMUM_SMOKE_RECORDS)),
+            "allow_single_cluster": True,
+            "dbcv_sample_size": 0,
+        },
+    )
+    embedding_path.write_text(
+        f"{smoke_embedding.model_dump_json(indent=2)}\n",
+        encoding="utf-8",
+    )
+    umap_path.write_text(
+        f"{smoke_umap.model_dump_json(indent=2)}\n",
+        encoding="utf-8",
+    )
+    clustering_path.write_text(
+        f"{smoke_clustering.model_dump_json(indent=2)}\n",
+        encoding="utf-8",
+    )
+    return config.model_copy(
+        update={
+            "embeddings_config": embedding_path,
+            "umap_config": umap_path,
+            "clustering_config": clustering_path,
+        },
+    )
+
+
+def _smoke_artifact_checks(run_dir: Path, manifest: PipelineRunManifest) -> list[DryRunCheck]:
+    checks = []
+    for record in manifest.stages:
+        marker = Path(record.marker_path)
+        valid = marker.is_file() and record.marker_sha256 == _sha256_file(marker)
+        checks.append(
+            _check(
+                f"smoke.artifact.{record.stage.value}",
+                valid,
+                "stage marker exists and matches its manifest checksum",
+                "stage marker is missing or has a checksum mismatch",
+                path=marker,
+            ),
+        )
+    temporary = [path for path in run_dir.rglob("*") if path.name.endswith(".tmp")]
+    checks.append(
+        _check(
+            "smoke.temporary_files",
+            not temporary,
+            "smoke run left no incomplete temporary files",
+            "smoke run left incomplete temporary files",
+            path=run_dir,
+        ),
+    )
+    try:
+        arrays = [np.load(path, mmap_mode="r", allow_pickle=False) for path in run_dir.rglob("*.npy")]
+        finite = all(bool(np.isfinite(array).all()) for array in arrays)
+        lengths = {
+            int(array.shape[0])
+            for array in arrays
+            if array.ndim >= 1
+            and any(part in str(array.filename) for part in ("corpus", "clustering", "reassignment"))
+        }
+        aligned = len(lengths) <= 1
+    except (OSError, ValueError):
+        finite = False
+        aligned = False
+    checks.extend(
+        [
+            _check(
+                "smoke.arrays_finite",
+                finite,
+                "numeric artifacts contain only finite values",
+                "numeric artifacts are unreadable or contain NaN/Inf",
+                path=run_dir,
+            ),
+            _check(
+                "smoke.row_alignment",
+                aligned,
+                "corpus, clustering, and reassignment arrays have aligned rows",
+                "downstream arrays disagree on their first dimension",
+                path=run_dir,
+            ),
+        ],
+    )
+    clustering_manifest_path = run_dir / "09-clustering" / "clustering-manifest.json"
+    try:
+        clustering_manifest = ClusteringManifest.model_validate_json(
+            clustering_manifest_path.read_text(encoding="utf-8"),
+        )
+    except (OSError, ValueError):
+        pass
+    else:
+        excessive_outliers = (
+            clustering_manifest.metrics.outlier_share
+            > clustering_manifest.config.max_outlier_share_warning
+        )
+        checks.append(
+            DryRunCheck(
+                code="smoke.outlier_share",
+                status=DryRunStatus.WARNING if excessive_outliers else DryRunStatus.READY,
+                message=(
+                    "small-sample outlier share exceeds its diagnostic threshold"
+                    if excessive_outliers
+                    else "small-sample outlier share is within its diagnostic threshold"
+                ),
+                path=str(clustering_manifest_path),
+            ),
+        )
+    return checks
+
+
+def run_smoke_pipeline(
+    config: PipelineConfig,
+    project_root: Path,
+    *,
+    records: int = 2_000,
+    seed: int = 42,
+    config_path: Path | None = None,
+    executor: StageExecutor = _default_executor,
+) -> SmokeRunReport:
+    """Run stages 1-11 on a deterministic local sample; never evaluate or publish it."""
+    source_preflight = dry_run_pipeline(config, project_root)
+    if not source_preflight.can_run:
+        msg = "source dry-run is blocked; smoke workspace was not created"
+        raise RuntimeError(msg)
+    run_id = config.run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    smoke_run_id = f"{run_id[:74]}-smoke"
+    workspace = (config.runs_root / smoke_run_id).resolve()
+    if workspace.exists():
+        msg = f"smoke workspace already exists: {workspace}"
+        raise FileExistsError(msg)
+    sample_path = workspace / "input" / "comments.jsonl"
+    sample = create_smoke_sample(config.source_dataset, sample_path, records=records, seed=seed)
+    smoke_config = _write_smoke_configs(config, workspace / "configs", sample.selected_records).model_copy(
+        update={
+            "source_dataset": sample_path,
+            "expected_records": sample.selected_records,
+            "run_id": smoke_run_id,
+            "manual_annotations": None,
+        },
+    )
+    smoke_config_path = workspace / "pipeline-smoke.json"
+    smoke_config_path.write_text(f"{smoke_config.model_dump_json(indent=2)}\n", encoding="utf-8")
+    (workspace / "NON_PUBLISHABLE").write_text(
+        "Smoke-run artifacts are for pipeline verification only and must never be published.\n",
+        encoding="utf-8",
+    )
+    run_dir = workspace / "run"
+    preflight = dry_run_pipeline(smoke_config, project_root, config_path=smoke_config_path, run_dir=run_dir)
+    if not preflight.can_run:
+        msg = "smoke-run preflight is blocked; inspect dry-run output"
+        raise RuntimeError(msg)
+    manifest = run_pipeline(
+        smoke_config,
+        project_root,
+        run_dir=run_dir,
+        stop_after=_SMOKE_LAST_STAGE,
+        executor=executor,
+    )
+    checks = _smoke_artifact_checks(run_dir, manifest)
+    successful = manifest.status == PipelineStatus.PARTIAL and len(manifest.stages) == _SMOKE_STAGE_COUNT
+    checks.append(
+        _check(
+            "smoke.stage_sequence",
+            successful,
+            "all automatic pre-review stages completed",
+            "smoke run did not complete every automatic pre-review stage",
+            path=run_dir / "run-manifest.json",
+        ),
+    )
+    if any(item.status == DryRunStatus.BLOCKED for item in checks):
+        status = DryRunStatus.BLOCKED
+    elif any(item.status == DryRunStatus.WARNING for item in checks):
+        status = DryRunStatus.WARNING
+    else:
+        status = DryRunStatus.READY
+    return SmokeRunReport(
+        status=status,
+        workspace=str(workspace),
+        sample=sample,
+        pipeline_status=manifest.status,
+        checks=checks,
+        full_run_command=[
+            str(config.python_executable),
+            "scripts/run_ml_pipeline.py",
+            "run",
+            str(config_path) if config_path is not None else "<pipeline-config.json>",
+        ],
+    )
 
 
 def publish_snapshot(export_dir: Path, publish_root: Path, run_id: str) -> Path:

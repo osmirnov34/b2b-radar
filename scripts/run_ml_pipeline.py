@@ -24,8 +24,10 @@ from src.operations.ml_pipeline import (
     dry_run_pipeline,
     publish_snapshot,
     render_dry_run_report,
+    render_smoke_run_report,
     rollback_snapshot,
     run_pipeline,
+    run_smoke_pipeline,
 )
 
 
@@ -48,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run.add_argument("--stop-after", type=PipelineStage, choices=list(PipelineStage))
     dry_run.add_argument("--verbose", action="store_true")
 
+    smoke = subparsers.add_parser("smoke-run", help="Run stages 1-11 on a deterministic non-public sample.")
+    smoke.add_argument("config", type=Path)
+    smoke.add_argument("--records", type=int, default=2_000)
+    smoke.add_argument("--seed", type=int, default=42)
+
     publish = subparsers.add_parser("publish", help="Atomically publish a strictly passing export.")
     publish.add_argument("export_dir", type=Path)
     publish.add_argument("publish_root", type=Path)
@@ -58,24 +65,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 -- CLI branches map to explicit exit codes.
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if args.command in {"run", "dry-run"}:
+        if args.command in {"run", "dry-run", "smoke-run"}:
             if not args.config.is_file():
                 parser.error(f"pipeline config not found: {args.config}")
-            if args.resume and args.run_dir is None:
+            if getattr(args, "resume", False) and args.run_dir is None:
                 parser.error("--resume requires --run-dir")
             config = PipelineConfig.model_validate_json(args.config.read_text(encoding="utf-8"))
             preflight = dry_run_pipeline(
                 config,
                 PROJECT_ROOT,
                 config_path=args.config,
-                run_dir=args.run_dir,
-                resume=args.resume,
-                restart_from=args.restart_from,
-                stop_after=args.stop_after,
+                run_dir=getattr(args, "run_dir", None),
+                resume=getattr(args, "resume", False),
+                restart_from=getattr(args, "restart_from", None),
+                stop_after=getattr(args, "stop_after", None),
             )
             print(render_dry_run_report(preflight, verbose=getattr(args, "verbose", False)))
             if args.command == "dry-run":
@@ -83,6 +90,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not preflight.can_run:
                 print("ERROR: real run refused because dry-run is blocked", file=sys.stderr)
                 return 2
+            if args.command == "smoke-run":
+                smoke_report = run_smoke_pipeline(
+                    config,
+                    PROJECT_ROOT,
+                    records=args.records,
+                    seed=args.seed,
+                    config_path=args.config,
+                )
+                print(render_smoke_run_report(smoke_report))
+                return 0 if smoke_report.full_run_allowed else 2
             result = run_pipeline(
                 config,
                 PROJECT_ROOT,

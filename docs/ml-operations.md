@@ -154,6 +154,31 @@ when it is blocked. It deliberately prints rather than executes the real command
 explicit terminal action. Re-run the notebook preflight whenever data, configuration, or resume/restart state changes.
 No report contains comment text or configuration values.
 
+### Resource estimate and executable smoke-run
+
+Dry-run includes a conservative resource estimate for 1024-dimensional float32 embeddings, working disk, system RAM,
+and GPU availability without initializing a CUDA context. It is a capacity warning, not a benchmark: model caches and
+library overhead can increase actual usage.
+
+After dry-run is allowed, exercise the automatic pipeline on a deterministic sample:
+
+```bash
+python3 scripts/run_ml_pipeline.py smoke-run configs/pipeline.example.json --records 2000 --seed 42
+```
+
+Sampling ranks provenance groups deterministically and copies complete video/source groups until the requested size is
+reached, so related records are not split merely to hit an exact count. The sample checksum, source checksum, seed,
+selected record count, and selected group count are recorded without text or provenance values.
+
+Smoke-run creates `<runs_root>/<run_id>-smoke/`, writes reduced batch/UMAP/HDBSCAN configurations there, and executes
+stages 1–11. It stops after outlier reassignment, never performs evaluation/export, and writes a `NON_PUBLISHABLE`
+marker. Its artifact gate verifies stage-marker checksums, incomplete temporary files, finite numeric arrays, row
+alignment, and the complete pre-review stage sequence. Smoke quality metrics are diagnostic only and must not be used
+to approve cluster quality.
+
+The notebook exposes smoke execution behind an explicit `RUN_SMOKE = True` switch. Its final admission cell releases
+the full terminal command only after both dry-run and smoke-run pass; it never starts the full run automatically.
+
 ### Configuration, command, resume, and restart planning
 
 The dry-run now strictly loads every stage configuration with its owning Pydantic model, checks schema version,
