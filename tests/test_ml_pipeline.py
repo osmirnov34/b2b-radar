@@ -189,6 +189,136 @@ def test_dry_run_resume_marks_verified_stages_without_changing_run(tmp_path: Pat
     assert [stage.action for stage in report.stages[:4]] == [DryRunStageAction.SKIP] * 4
 
 
+def test_dry_run_strictly_validates_configs_without_exposing_values(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="invalid-config")
+    invalid = tmp_path / "invalid-embeddings.json"
+    invalid.write_text('{"schema_version":1,"model_name":"private-model","unknown_secret":"do-not-show"}')
+    config = config.model_copy(update={"embeddings_config": invalid})
+
+    report = dry_run_pipeline(config, PROJECT_ROOT)
+
+    check = next(item for item in report.checks if item.code == "config_validation.embeddings")
+    assert check.status == DryRunStatus.BLOCKED
+    assert "private-model" not in report.model_dump_json()
+    assert "do-not-show" not in report.model_dump_json()
+
+
+def test_dry_run_blocks_research_export_and_run_directory_escape(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="unsafe-export")
+    export_config = tmp_path / "unsafe-export.json"
+    export_config.write_text(ExportConfig(include_research_text=True).model_dump_json())
+    config = config.model_copy(update={"export_config": export_config})
+    escaped = tmp_path / "outside-runs" / "unsafe-export"
+
+    report = dry_run_pipeline(config, PROJECT_ROOT, run_dir=escaped)
+
+    blocked = {check.code for check in report.checks if check.status == DryRunStatus.BLOCKED}
+    assert "security.export_research_text" in blocked
+    assert "run.scope" in blocked
+
+
+def test_dry_run_detects_invalid_resume_sequence_and_partial_artifacts(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="invalid-resume")
+    run_dir = tmp_path / "runs" / "invalid-resume"
+    run_pipeline(
+        config,
+        PROJECT_ROOT,
+        stop_after=PipelineStage.CLEANING,
+        executor=_successful_executor,
+    )
+    manifest_path = run_dir / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["stages"].append(manifest["stages"][-1])
+    manifest_path.write_text(json.dumps(manifest))
+    partial_dir = run_dir / "05-embeddings"
+    partial_dir.mkdir()
+    (partial_dir / ".embeddings.partial.npy").write_bytes(b"partial")
+
+    report = dry_run_pipeline(config, PROJECT_ROOT, run_dir=run_dir, resume=True)
+
+    blocked = {check.code for check in report.checks if check.status == DryRunStatus.BLOCKED}
+    assert "resume.stage_sequence" in blocked
+    assert "resume.partial.embeddings" in blocked
+
+
+def test_dry_run_restart_marks_force_replacements_and_manual_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path, run_id="restart-plan")
+    run_dir = tmp_path / "runs" / "restart-plan"
+    run_pipeline(
+        config,
+        PROJECT_ROOT,
+        stop_after=PipelineStage.CLEANING,
+        executor=_successful_executor,
+    )
+    monkeypatch.setattr("src.operations.ml_pipeline.importlib.util.find_spec", lambda _name: object())
+
+    report = dry_run_pipeline(
+        config,
+        PROJECT_ROOT,
+        run_dir=run_dir,
+        resume=True,
+        restart_from=PipelineStage.CLEANING,
+    )
+
+    assert [stage.action for stage in report.stages[:3]] == [DryRunStageAction.SKIP] * 3
+    cleaning = report.stages[3]
+    assert cleaning.action == DryRunStageAction.RESTART
+    assert cleaning.requires_force is True
+    assert cleaning.replaced_paths
+    assert "downstream manual review must be repeated" in cleaning.warnings
+    assert any(check.code == "restart.manual_review" for check in report.checks)
+
+
+def test_dry_run_blocks_export_only_restart_without_final_evaluation(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="export-restart")
+    run_dir = tmp_path / "runs" / "export-restart"
+    run_pipeline(
+        config,
+        PROJECT_ROOT,
+        stop_after=PipelineStage.REASSIGNMENT,
+        executor=_successful_executor,
+    )
+
+    report = dry_run_pipeline(
+        config,
+        PROJECT_ROOT,
+        run_dir=run_dir,
+        resume=True,
+        restart_from=PipelineStage.EXPORT,
+    )
+
+    check = next(item for item in report.checks if item.code == "restart.export_evaluation")
+    assert check.status == DryRunStatus.BLOCKED
+
+
+def test_failed_stage_resume_replaces_failed_record_without_duplicates(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="failed-resume")
+    run_dir = tmp_path / "runs" / "failed-resume"
+
+    def fail_cleaning(command: list[str], log_path: Path, cwd: Path) -> int:
+        if Path(command[1]).name == "clean_dataset.py":
+            log_path.write_text("safe failure\n")
+            return 1
+        return _successful_executor(command, log_path, cwd)
+
+    failed = run_pipeline(config, PROJECT_ROOT, executor=fail_cleaning)
+    assert failed.status == PipelineStatus.FAILED
+    resumed = run_pipeline(
+        config,
+        PROJECT_ROOT,
+        run_dir=run_dir,
+        resume=True,
+        stop_after=PipelineStage.CLEANING,
+        executor=_successful_executor,
+    )
+    assert resumed.status == PipelineStatus.PARTIAL
+    assert [record.stage for record in resumed.stages] == list(PipelineStage)[:4]
+    assert resumed.stages[-1].command[-1] == "--force"
+
+
 def test_pipeline_stops_at_manual_review_gate_and_records_safe_logs(tmp_path: Path) -> None:
     config = _config(tmp_path, run_id="review-run")
     result = run_pipeline(config, PROJECT_ROOT, executor=_preliminary_evaluation_executor)

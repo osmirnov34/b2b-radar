@@ -133,5 +133,27 @@ packages, free disk space and permissions; streams the complete dataset for SHA-
 first 100 non-empty records against the comment/reply contract without retaining or returning text values. The report
 contains typed checks, stage actions, expected markers, a manual-gate forecast, and the command for a future real run.
 
-CLI rendering, deeper typed configuration checks, publication dry-run, and the notebook display belong to the next
-dry-run implementation increments; they are intentionally not duplicated inside this foundational API.
+CLI rendering, publication dry-run, and the notebook display belong to later dry-run implementation increments; they
+are intentionally not duplicated inside this API.
+
+### Configuration, command, resume, and restart planning
+
+The dry-run now strictly loads every stage configuration with its owning Pydantic model, checks schema version,
+normalized embedding compatibility, development-only clustering, deterministic UMAP, deduplication scale, bootstrap
+evaluation, the manual gate, and public-export safety. Missing model revision, incomplete validation, missing manual
+annotations, or a non-strict export are visible warnings; research text, incompatible normalization, invalid JSON, and
+unknown fields are blockers. Configuration values and validation inputs are never copied into the report.
+
+Every stage uses the production command generator. The plan checks required flags, duplicate singleton flags,
+shell-control tokens, marker scope, and whether path arguments are either run-local or explicitly allowed inputs. A
+future upstream artifact is marked as `upstream_generated_inputs`, not reported as missing.
+
+For a new run, the resolved directory must remain under `runs_root`; an existing directory, temporary file, or symlink
+is reported safely. Resume additionally requires a unique contiguous stage prefix, matching dataset/config hashes,
+valid marker hashes, and no unexplained partial output. Verified stages are `skip`; a failed last stage is planned as
+an automatic forced restart without duplicating its history record.
+
+With `restart_from`, prior stages remain `skip`, the selected and later stages become `restart`, existing replacement
+paths are listed, and `requires_force` is explicit. Restarting model inputs or labels warns that manual review must be
+repeated. Export-only restart is blocked until evaluation has a non-preliminary `pass`. The real runner enforces the
+same `resume` and `runs_root` boundaries even if dry-run is bypassed.

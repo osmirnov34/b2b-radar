@@ -71,6 +71,7 @@ class EmbeddingConfig(_ConfigModel):
 
 
 class DeduplicationConfig(_ConfigModel):
+    schema_version: int = 1
     enabled: bool = True
     threshold: float = Field(default=0.95, ge=0, le=1)
     block_size: int = Field(default=2048, ge=1)
