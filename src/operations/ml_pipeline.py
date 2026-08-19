@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -133,6 +134,61 @@ class PipelineDryRunReport(_PipelineModel):
     stages: list[DryRunStageResult]
     awaiting_review_expected: bool
     real_command: list[str]
+
+    @property
+    def can_run(self) -> bool:
+        """Return whether preflight found no condition that must block execution."""
+        return self.status != DryRunStatus.BLOCKED
+
+
+def render_dry_run_report(report: PipelineDryRunReport, *, verbose: bool = False) -> str:
+    """Render a privacy-safe report for terminals and notebook output."""
+    symbols = {
+        DryRunStatus.READY: "[READY]",
+        DryRunStatus.WARNING: "[WARN]",
+        DryRunStatus.BLOCKED: "[BLOCKED]",
+    }
+    counts = Counter(check.status for check in report.checks)
+    lines = [
+        f"Dry-run: {symbols[report.status]}",
+        f"Run: {report.run_id}",
+        f"Directory: {report.run_dir}",
+        (
+            "Checks: "
+            f"{counts[DryRunStatus.READY]} ready, "
+            f"{counts[DryRunStatus.WARNING]} warnings, "
+            f"{counts[DryRunStatus.BLOCKED]} blocked"
+        ),
+    ]
+    if report.dataset is not None:
+        lines.append(
+            "Dataset: "
+            f"{report.dataset.non_empty_records} records; "
+            f"{report.dataset.detected_format}; sha256={report.dataset.sha256[:12]}...",
+        )
+    if report.available_disk_gb is not None:
+        lines.append(f"Free disk: {report.available_disk_gb:.2f} GiB")
+    lines.append("Stages:")
+    lines.extend(
+        f"  {stage.number:02d}. {stage.stage.value}: {stage.action.value}"
+        + (f" ({'; '.join(stage.warnings)})" if stage.warnings else "")
+        for stage in report.stages
+    )
+    visible_checks = [
+        check
+        for check in report.checks
+        if verbose or check.status != DryRunStatus.READY
+    ]
+    if visible_checks:
+        lines.append("Checks requiring attention:" if not verbose else "Checks:")
+        lines.extend(
+            f"  {symbols[check.status]} {check.code}: {check.message}"
+            + (f" [{check.path}]" if check.path else "")
+            for check in visible_checks
+        )
+    lines.append("Decision: execution allowed" if report.can_run else "Decision: execution blocked")
+    lines.append(f"Command: {shlex.join(report.real_command)}")
+    return "\n".join(lines)
 
 
 class PipelineConfig(_PipelineModel):

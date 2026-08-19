@@ -80,6 +80,10 @@ Instructions for validating, sampling, and splitting the full corpus without sou
 [`docs/dataset-preparation.md`](docs/dataset-preparation.md).
 The same guide covers privacy-safe development EDA, explicit comment/reply text units, cleaning, and the thin notebook
 in `notebooks/01_development_eda.ipynb`.
+
+Before a real ML run, execute the notebook's mandatory preflight section or run
+`python3 scripts/run_ml_pipeline.py dry-run configs/pipeline.example.json`. A real `run` repeats the same read-only
+checks automatically and refuses to start when any check is blocked; see `docs/ml-operations.md`.
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,

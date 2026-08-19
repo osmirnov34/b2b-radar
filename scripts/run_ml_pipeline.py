@@ -18,9 +18,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.operations.ml_pipeline import (
+    DryRunStatus,
     PipelineConfig,
     PipelineStage,
+    dry_run_pipeline,
     publish_snapshot,
+    render_dry_run_report,
     rollback_snapshot,
     run_pipeline,
 )
@@ -37,6 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--restart-from", type=PipelineStage, choices=list(PipelineStage))
     run.add_argument("--stop-after", type=PipelineStage, choices=list(PipelineStage))
 
+    dry_run = subparsers.add_parser("dry-run", help="Validate and plan a run without writing files.")
+    dry_run.add_argument("config", type=Path)
+    dry_run.add_argument("--run-dir", type=Path)
+    dry_run.add_argument("--resume", action="store_true")
+    dry_run.add_argument("--restart-from", type=PipelineStage, choices=list(PipelineStage))
+    dry_run.add_argument("--stop-after", type=PipelineStage, choices=list(PipelineStage))
+    dry_run.add_argument("--verbose", action="store_true")
+
     publish = subparsers.add_parser("publish", help="Atomically publish a strictly passing export.")
     publish.add_argument("export_dir", type=Path)
     publish.add_argument("publish_root", type=Path)
@@ -51,12 +62,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        if args.command == "run":
+        if args.command in {"run", "dry-run"}:
             if not args.config.is_file():
                 parser.error(f"pipeline config not found: {args.config}")
             if args.resume and args.run_dir is None:
                 parser.error("--resume requires --run-dir")
             config = PipelineConfig.model_validate_json(args.config.read_text(encoding="utf-8"))
+            preflight = dry_run_pipeline(
+                config,
+                PROJECT_ROOT,
+                config_path=args.config,
+                run_dir=args.run_dir,
+                resume=args.resume,
+                restart_from=args.restart_from,
+                stop_after=args.stop_after,
+            )
+            print(render_dry_run_report(preflight, verbose=getattr(args, "verbose", False)))
+            if args.command == "dry-run":
+                return 2 if preflight.status == DryRunStatus.BLOCKED else 0
+            if not preflight.can_run:
+                print("ERROR: real run refused because dry-run is blocked", file=sys.stderr)
+                return 2
             result = run_pipeline(
                 config,
                 PROJECT_ROOT,
@@ -76,7 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         manifest = rollback_snapshot(args.publish_root)
         print(f"Rolled back manifest: {manifest}")
-        return 0
+        return 0  # noqa: TRY300 -- command branches return their own process status.
     except (FileExistsError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

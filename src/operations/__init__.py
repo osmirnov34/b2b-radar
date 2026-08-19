@@ -10,6 +10,7 @@ from src.operations.ml_pipeline import (
     PipelineDryRunReport,
     PipelineStage,
     dry_run_pipeline,
+    render_dry_run_report,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "PipelineDryRunReport",
     "PipelineStage",
     "dry_run_pipeline",
+    "render_dry_run_report",
 ]

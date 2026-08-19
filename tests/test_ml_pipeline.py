@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import run_ml_pipeline as pipeline_cli
 from src.ml.evaluation import (
     EvaluationMetrics,
     EvaluationStatus,
@@ -19,6 +20,7 @@ from src.operations.ml_pipeline import (
     PipelineStatus,
     dry_run_pipeline,
     publish_snapshot,
+    render_dry_run_report,
     rollback_snapshot,
     run_pipeline,
 )
@@ -156,6 +158,45 @@ def test_dry_run_is_read_only_and_builds_commands_without_subprocess(
     dedup = next(stage for stage in report.stages if stage.stage == PipelineStage.DEDUPLICATION)
     assert dedup.command.count("--output-dir") == 1
     assert "Useful CRM workflow" not in report.model_dump_json()
+
+
+def test_dry_run_report_is_actionable_and_does_not_render_comment_text(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="rendered-dry-run")
+
+    report = dry_run_pipeline(config, PROJECT_ROOT)
+    rendered = render_dry_run_report(report)
+
+    assert f"Dry-run: [{report.status.value.upper()}]" in rendered
+    assert "Decision: execution " in rendered
+    assert "01. inspection:" in rendered
+    assert "scripts/run_ml_pipeline.py run" in rendered
+    assert "Useful CRM workflow" not in rendered
+    assert report.can_run is (report.status != DryRunStatus.BLOCKED)
+
+
+def test_pipeline_cli_dry_run_and_run_refuse_blocked_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path, run_id="blocked-cli")
+    config.source_dataset.write_text("comment_text,video_id\nprivate text,v1\n")
+    config_path = tmp_path / "pipeline.json"
+    config_path.write_text(config.model_dump_json())
+
+    assert pipeline_cli.main(["dry-run", str(config_path)]) == 2
+
+    def forbidden_run(*_args: object, **_kwargs: object) -> None:
+        msg = "blocked preflight must prevent the real runner"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(pipeline_cli, "run_pipeline", forbidden_run)
+    assert pipeline_cli.main(["run", str(config_path)]) == 2
+    captured = capsys.readouterr()
+    assert "Decision: execution blocked" in captured.out
+    assert "private text" not in captured.out
+    assert "real run refused" in captured.err
+    assert not (config.runs_root / "blocked-cli").exists()
 
 
 def test_dry_run_safely_reports_wrong_dataset_format(tmp_path: Path) -> None:

@@ -133,8 +133,26 @@ packages, free disk space and permissions; streams the complete dataset for SHA-
 first 100 non-empty records against the comment/reply contract without retaining or returning text values. The report
 contains typed checks, stage actions, expected markers, a manual-gate forecast, and the command for a future real run.
 
-CLI rendering, publication dry-run, and the notebook display belong to later dry-run implementation increments; they
-are intentionally not duplicated inside this API.
+### Running preflight from the CLI and notebook
+
+Run the same read-only preflight from a terminal before allocating compute:
+
+```bash
+python3 scripts/run_ml_pipeline.py dry-run configs/pipeline.example.json
+```
+
+The command prints dataset identity and format, disk space, stage actions, warnings/blockers, the execution decision,
+and the exact future `run` command. It exits with code `0` for `ready` or `warning`, and `2` for `blocked`. Add
+`--verbose` to include successful checks. Resume, restart, run-directory, and stop-after flags are identical to `run`.
+
+The `run` subcommand always repeats this preflight immediately before execution and refuses to create a run when the
+result is blocked. Warnings remain non-blocking because expected manual review and intentionally incomplete validation
+are normal during research, but they are printed prominently for a conscious decision.
+
+The first section of `notebooks/01_development_eda.ipynb` exposes the same typed report and raises before later cells
+when it is blocked. It deliberately prints rather than executes the real command: starting a costly run remains an
+explicit terminal action. Re-run the notebook preflight whenever data, configuration, or resume/restart state changes.
+No report contains comment text or configuration values.
 
 ### Configuration, command, resume, and restart planning
 
