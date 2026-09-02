@@ -60,6 +60,22 @@ def test_colab_notebook_pins_code_model_and_uses_public_operations_api() -> None
     assert PipelineStatus.COMPLETED.value == "completed"
 
 
+def test_colab_notebook_supports_python_313_and_checks_binary_ml_stack() -> None:
+    source = "\n".join(_code_sources(_notebook()))
+
+    assert "(3, 13)" in source
+    assert "expected 3.11, 3.12, or 3.13" in source
+    assert '"pip", "install", "--upgrade", "pip", "setuptools", "wheel"' in source
+    assert 'shutil.which("g++")' in source
+    assert '"hnswlib==0.8.0", "--no-binary=hnswlib"' in source
+    assert '"hnswlib_install": hnswlib_install' in source
+    for package in ("sentence_transformers", "umap", "hdbscan", "hnswlib"):
+        assert f'importlib.import_module("{package}")' in source
+    assert "compatibility_check" in source
+    assert source.index("inspect_comments_jsonl(") < source.index("compatibility_vectors")
+    assert "colab-environment.json" in source
+
+
 def test_colab_notebook_validates_before_creating_runtime_config() -> None:
     sources = _code_sources(_notebook())
     combined = "\n".join(sources)

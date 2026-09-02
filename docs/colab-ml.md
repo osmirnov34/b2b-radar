@@ -4,6 +4,16 @@ Open `notebooks/00_colab_pipeline.ipynb` in Google Colab and select a GPU runtim
 repository, records the resolved Git commit, installs the `analysis` dependency group, mounts Google Drive, and either
 downloads the configured public Drive file or copies an explicitly mounted Drive path.
 
+Python 3.11 through 3.13 are supported. The setup cell upgrades the packaging tools, installs the ML dependencies with
+the active interpreter, and records their versions. After data validation, a small synthetic compatibility check runs
+UMAP, HDBSCAN, and HNSWLIB before any corpus-scale work. A failure stops the notebook before smoke/full execution. The
+other notebooks cloned with the repository are inert and are never executed automatically.
+
+PyPI currently provides CPython 3.13 Linux wheels for the main numeric and ML stack but not for `hnswlib` 0.8.0. On
+Python 3.13 the notebook therefore checks for `g++` and performs one explicit, pinned source build before the general
+project installation. This exception is recorded as `controlled-source-build` in `colab-environment.json`; no other
+source build is intentionally requested.
+
 The notebook does not assume that the downloaded object is comments data. It detects the format and accepts only
 UTF-8 JSONL whose records validate as `ExportedComment`. HTML permission pages, archives, JSON arrays, CSV, corrupt
 records, and large count mismatches stop before any model is loaded. No automatic format conversion is performed.

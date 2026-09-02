@@ -15,8 +15,8 @@ python scripts/run_ml_pipeline.py run configs/pipeline.example.json
 ```
 
 Each run is written to `data/ml-runs/<run_id>/`. Set an explicit `run_id` for external scheduling, or leave it null for
-a UTC timestamp. Preflight requires Python 3.11/3.12, all inputs/configurations/scripts, and the configured amount of
-free disk space. No subprocess is launched through a shell.
+a UTC timestamp. Preflight requires Python 3.11, 3.12, or 3.13, all inputs/configurations/scripts, and the configured
+amount of free disk space. No subprocess is launched through a shell.
 
 For a deliberate partial run:
 

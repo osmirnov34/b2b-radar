@@ -825,9 +825,9 @@ def _environment_checks(
     checks = [
         _check(
             "python.version",
-            (3, 11) <= sys.version_info[:2] < (3, 13),
+            _python_version_supported(sys.version_info[:2]),
             f"active Python {sys.version_info.major}.{sys.version_info.minor} is supported",
-            "active Python must be >=3.11,<3.13",
+            "active Python must be >=3.11,<3.14",
         ),
         _check(
             "python.executable",
@@ -1159,9 +1159,14 @@ def _run_scope_checks(config: PipelineConfig, context: PipelineContext) -> list[
     return checks
 
 
+def _python_version_supported(version: tuple[int, int]) -> bool:
+    """Return whether a Python major/minor pair is supported by the ML pipeline."""
+    return (3, 11) <= version < (3, 14)
+
+
 def _preflight(config: PipelineConfig, project_root: Path, run_dir: Path) -> None:
-    if sys.version_info < (3, 11) or sys.version_info >= (3, 13):
-        msg = "ML pipeline requires Python >=3.11,<3.13"
+    if not _python_version_supported(sys.version_info[:2]):
+        msg = "ML pipeline requires Python >=3.11,<3.14"
         raise RuntimeError(msg)
     missing = [str(path) for path in _required_files(config) if not path.is_file()]
     if missing:
