@@ -28,7 +28,8 @@ Example local provenance:
   "original_filename": "comments.jsonl",
   "size_bytes": 0,
   "sha256": "...",
-  "expected_records": 260000
+  "expected_records": 260000,
+  "expected_records_tolerance": 0.1
 }
 ```
 
@@ -217,6 +218,10 @@ The dataset is blocked when:
 - no rows match `ExportedComment`;
 - the row error rate exceeds `--max-error-rate` (default 1%);
 - the valid record count differs from `--expected-records` beyond the configured tolerance.
+
+Record-count comparison uses `abs(actual - expected) / expected <= tolerance`. The report preserves the expected and
+actual counts, signed difference, relative difference, tolerance, and result. This tolerance never weakens format,
+UTF-8, or per-record schema validation.
 
 Missing authors, dates, queries, duplicates, and individual empty comments are reported but are not format-level
 failures. Inspection and cleaning never mutate `data/raw`.

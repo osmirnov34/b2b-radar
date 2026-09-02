@@ -49,6 +49,16 @@ def _inspection_markdown(report: DatasetInspection) -> str:
         if lengths is not None
         else "no non-empty text"
     )
+    comparison = report.record_count_comparison
+    count_summary = (
+        "not configured"
+        if comparison is None
+        else (
+            f"expected={comparison.expected}, actual={comparison.actual}, difference={comparison.difference:+d}, "
+            f"relative={comparison.relative_difference:.2%}, tolerance={comparison.tolerance:.2%}, "
+            f"matches={comparison.matches}"
+        )
+    )
     return f"""# Dataset inspection
 
 - Status: **{status}**
@@ -60,6 +70,7 @@ def _inspection_markdown(report: DatasetInspection) -> str:
 - Encoding: `{report.format.encoding or 'unknown'}`
 - Lines: {report.lines_total}
 - Contract-valid records: {report.contract_valid}
+- Record-count comparison: {count_summary}
 - Row error rate: {report.error_rate:.2%}
 - Non-empty comments: {report.non_empty_text}
 - Unique authors: {report.unique_authors}

@@ -66,6 +66,15 @@ class InspectionError(_InspectionModel):
     field_types: dict[str, str] = Field(default_factory=dict)
 
 
+class RecordCountComparison(_InspectionModel):
+    expected: int = Field(ge=1)
+    actual: int = Field(ge=0)
+    difference: int
+    relative_difference: float = Field(ge=0)
+    tolerance: float = Field(ge=0, le=1)
+    matches: bool
+
+
 class TextLengthStats(_InspectionModel):
     minimum: int = Field(ge=0)
     maximum: int = Field(ge=0)
@@ -116,11 +125,35 @@ class DatasetInspection(_InspectionModel):
     error_rate: float = Field(ge=0, le=1)
     expected_records: int | None = Field(default=None, ge=1)
     record_count_matches_expectation: bool | None = None
+    record_count_comparison: RecordCountComparison | None = None
     critical_errors: list[str]
 
     @property
     def is_usable(self) -> bool:
         return not self.critical_errors
+
+
+def compare_record_count(*, actual: int, expected: int, tolerance: float) -> RecordCountComparison:
+    """Compare an actual count with an expected value using a symmetric relative tolerance."""
+    if actual < 0:
+        msg = "actual record count must be non-negative"
+        raise ValueError(msg)
+    if expected < 1:
+        msg = "expected record count must be positive"
+        raise ValueError(msg)
+    if not 0 <= tolerance <= 1:
+        msg = "record count tolerance must be between 0 and 1"
+        raise ValueError(msg)
+    difference = actual - expected
+    relative_difference = abs(difference) / expected
+    return RecordCountComparison(
+        expected=expected,
+        actual=actual,
+        difference=difference,
+        relative_difference=relative_difference,
+        tolerance=tolerance,
+        matches=relative_difference <= tolerance,
+    )
 
 
 def _detect_delimited(text: str) -> DatasetFormat | None:
@@ -377,10 +410,13 @@ def inspect_comments_jsonl(
     invalid_rows = json_invalid + non_objects + contract_invalid
     error_rate = invalid_rows / checked_rows if checked_rows else 0.0
     duplicate_groups = [count for count in text_counts.values() if count > 1]
-    record_count_matches: bool | None = None
+    record_count_comparison: RecordCountComparison | None = None
     if expected_records is not None:
-        difference = abs(contract_valid - expected_records) / expected_records
-        record_count_matches = difference <= expected_records_tolerance
+        record_count_comparison = compare_record_count(
+            actual=contract_valid,
+            expected=expected_records,
+            tolerance=expected_records_tolerance,
+        )
 
     critical: list[str] = []
     if not format_result.matches:
@@ -389,8 +425,12 @@ def inspect_comments_jsonl(
         critical.append("no records match the ExportedComment contract")
     if error_rate > max_error_rate:
         critical.append(f"row error rate {error_rate:.2%} exceeds allowed {max_error_rate:.2%}")
-    if record_count_matches is False:
-        critical.append(f"record count {contract_valid} differs from expected {expected_records}")
+    if record_count_comparison is not None and not record_count_comparison.matches:
+        critical.append(
+            f"record count {contract_valid} differs from expected {expected_records} by "
+            f"{record_count_comparison.relative_difference:.2%}, exceeding tolerance "
+            f"{record_count_comparison.tolerance:.2%}",
+        )
 
     return DatasetInspection(
         path=str(path),
@@ -425,6 +465,9 @@ def inspect_comments_jsonl(
         errors=errors,
         error_rate=error_rate,
         expected_records=expected_records,
-        record_count_matches_expectation=record_count_matches,
+        record_count_matches_expectation=(
+            record_count_comparison.matches if record_count_comparison is not None else None
+        ),
+        record_count_comparison=record_count_comparison,
         critical_errors=critical,
     )

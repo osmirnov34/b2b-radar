@@ -83,6 +83,11 @@ def test_colab_notebook_validates_before_creating_runtime_config() -> None:
     assert combined.index("inspect_comments_jsonl(") < combined.index("PipelineConfig.model_validate_json(")
     assert "DatasetFormat.JSONL" in combined
     assert "inspection.is_usable" in combined
+    assert "RECORD_COUNT_TOLERANCE = 0.25" in combined
+    assert "expected_records_tolerance=RECORD_COUNT_TOLERANCE" in combined
+    assert '"record_count_comparison"' in combined
+    assert '"expected_records": EXPECTED_RECORDS' in combined
+    assert '"expected_records_tolerance": RECORD_COUNT_TOLERANCE' in combined
     assert '"require_final_evaluation": true' not in combined
     assert "embeddings.colab.json" in combined
     assert '"device": "cuda"' in combined

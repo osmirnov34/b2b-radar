@@ -6,6 +6,7 @@
   "python_executable": ".venv/bin/python",
   "minimum_free_gb": 5.0,
   "expected_records": 260000,
+  "expected_records_tolerance": 0.1,
   "cleaning_config": "configs/dataset-cleaning.example.json",
   "embeddings_config": "configs/embeddings.example.json",
   "deduplication_config": "configs/semantic-deduplication.example.json",

@@ -26,7 +26,7 @@ from src.ml.config import CleaningConfig, DeduplicationConfig, EmbeddingConfig
 from src.ml.dimensionality_reduction import UMAPConfig
 from src.ml.evaluation import EvaluationConfig, EvaluationMetrics, EvaluationStatus
 from src.ml.export import ExportConfig
-from src.ml.inspection import DatasetFormat, detect_dataset_format
+from src.ml.inspection import DatasetFormat, compare_record_count, detect_dataset_format
 from src.ml.outlier_reassignment import OutlierReassignmentConfig
 from src.ml.schemas import ExportedComment
 from src.ml.topic_representation import TopicRepresentationConfig
@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _DRY_RUN_STRUCTURE_SAMPLE = 100
-_EXPECTED_RECORDS_TOLERANCE = 0.10
 _COMMAND_PREFIX_LENGTH = 2
 _MINIMUM_COMMAND_LENGTH = 3
 _MINIMUM_SMOKE_RECORDS = 20
@@ -107,6 +106,8 @@ class DryRunDatasetSummary(_PipelineModel):
     lines_total: int = Field(ge=0)
     non_empty_records: int = Field(ge=0)
     expected_records: int | None = Field(default=None, ge=1)
+    expected_records_tolerance: float = Field(ge=0, le=1)
+    record_count_relative_difference: float | None = Field(default=None, ge=0)
     expected_format: str
     detected_format: str
     format_matches: bool
@@ -227,6 +228,7 @@ class PipelineConfig(_PipelineModel):
     python_executable: Path = Path(sys.executable)
     minimum_free_gb: float = Field(default=5.0, ge=0)
     expected_records: int | None = Field(default=None, ge=1)
+    expected_records_tolerance: float = Field(default=0.10, ge=0, le=1)
     cleaning_config: Path = Path("configs/dataset-cleaning.example.json")
     embeddings_config: Path = Path("configs/embeddings.example.json")
     deduplication_config: Path = Path("configs/semantic-deduplication.example.json")
@@ -608,7 +610,14 @@ def _command(
     }
     command = commands[stage]
     if stage == PipelineStage.INSPECTION and config.expected_records is not None:
-        command.extend(["--expected-records", str(config.expected_records)])
+        command.extend(
+            [
+                "--expected-records",
+                str(config.expected_records),
+                "--expected-records-tolerance",
+                str(config.expected_records_tolerance),
+            ],
+        )
     if stage == PipelineStage.EVALUATION and config.manual_annotations is not None:
         command.extend(["--manual-annotations", str(config.manual_annotations)])
     if force and stage != PipelineStage.INSPECTION:
@@ -948,10 +957,14 @@ def _dataset_dry_run(config: PipelineConfig) -> tuple[DryRunDatasetSummary | Non
                 path=str(path),
             ),
         ]
-    expected_matches = True
+    count_comparison = None
     if config.expected_records is not None:
-        difference = abs(non_empty_records - config.expected_records) / config.expected_records
-        expected_matches = difference <= _EXPECTED_RECORDS_TOLERANCE
+        count_comparison = compare_record_count(
+            actual=non_empty_records,
+            expected=config.expected_records,
+            tolerance=config.expected_records_tolerance,
+        )
+    expected_matches = count_comparison is None or count_comparison.matches
     usable = format_result.matches and structural_errors == 0 and expected_matches
     summary = DryRunDatasetSummary(
         path=str(path),
@@ -960,6 +973,10 @@ def _dataset_dry_run(config: PipelineConfig) -> tuple[DryRunDatasetSummary | Non
         lines_total=lines_total,
         non_empty_records=non_empty_records,
         expected_records=config.expected_records,
+        expected_records_tolerance=config.expected_records_tolerance,
+        record_count_relative_difference=(
+            count_comparison.relative_difference if count_comparison is not None else None
+        ),
         expected_format=format_result.expected.value,
         detected_format=format_result.detected.value,
         format_matches=format_result.matches,
@@ -978,7 +995,12 @@ def _dataset_dry_run(config: PipelineConfig) -> tuple[DryRunDatasetSummary | Non
             "dataset.contract",
             usable,
             "sampled dataset structure and record-count expectation are usable",
-            "dataset structure or record-count expectation blocks the pipeline",
+            (
+                "dataset structure or record-count expectation blocks the pipeline"
+                if count_comparison is None
+                else f"record-count difference {count_comparison.relative_difference:.2%} exceeds tolerance "
+                f"{count_comparison.tolerance:.2%}, or sampled structure is invalid"
+            ),
             path=path,
         ),
     ]
@@ -994,6 +1016,12 @@ def _command_path_tokens(command: list[str]) -> list[str]:
     paths = []
     for index, token in enumerate(command):
         if index in output_value_indices or token.startswith("-"):
+            continue
+        try:
+            float(token)
+        except ValueError:
+            pass
+        else:
             continue
         candidate = Path(token)
         if index < _COMMAND_PREFIX_LENGTH or candidate.suffix or "/" in token:

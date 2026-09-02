@@ -3,9 +3,28 @@ from pathlib import Path
 
 import pytest
 
-from src.ml import DatasetFormat, detect_dataset_format, inspect_comments_jsonl
+from src.ml import DatasetFormat, compare_record_count, detect_dataset_format, inspect_comments_jsonl
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def test_record_count_comparator_uses_symmetric_relative_tolerance() -> None:
+    accepted = compare_record_count(actual=208_302, expected=260_000, tolerance=0.25)
+    blocked = compare_record_count(actual=208_302, expected=260_000, tolerance=0.19)
+
+    assert accepted.difference == -51_698
+    assert accepted.relative_difference == pytest.approx(0.19883846)
+    assert accepted.matches
+    assert not blocked.matches
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected", "tolerance"),
+    [(-1, 1, 0.1), (1, 0, 0.1), (1, 1, -0.1), (1, 1, 1.1)],
+)
+def test_record_count_comparator_rejects_invalid_arguments(actual: int, expected: int, tolerance: float) -> None:
+    with pytest.raises(ValueError, match=r"count|tolerance"):
+        compare_record_count(actual=actual, expected=expected, tolerance=tolerance)
 
 
 @pytest.mark.parametrize(
@@ -42,6 +61,8 @@ def test_inspection_profiles_valid_fixture_without_exposing_text() -> None:
     assert report.unique_authors == 2
     assert report.unique_videos == 2
     assert report.record_count_matches_expectation is True
+    assert report.record_count_comparison is not None
+    assert report.record_count_comparison.relative_difference == 0
     assert report.sha256
     assert report.errors == []
 

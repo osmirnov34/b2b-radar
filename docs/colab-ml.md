@@ -17,6 +17,9 @@ source build is intentionally requested.
 The notebook does not assume that the downloaded object is comments data. It detects the format and accepts only
 UTF-8 JSONL whose records validate as `ExportedComment`. HTML permission pages, archives, JSON arrays, CSV, corrupt
 records, and large count mismatches stop before any model is loaded. No automatic format conversion is performed.
+The expected row count is approximate: `RECORD_COUNT_TOLERANCE` defaults to `0.25`, so the notebook accepts a symmetric
+relative difference of up to 25%. It prints and records expected, actual, signed difference, relative difference,
+tolerance, and the comparison result. This tolerance applies only to record count; format and schema checks stay strict.
 
 ## Execution gates
 
