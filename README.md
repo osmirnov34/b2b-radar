@@ -85,6 +85,10 @@ checks automatically and refuses to start when any check is blocked; see `docs/m
 For an executable wiring check before allocating a full run, use
 `python3 scripts/run_ml_pipeline.py smoke-run configs/pipeline.example.json --records 2000`. Smoke artifacts are local,
 explicitly non-publishable, and stop before manual evaluation and export.
+
+For a hosted GPU workflow, open [`notebooks/00_colab_pipeline.ipynb`](notebooks/00_colab_pipeline.ipynb) in Google
+Colab. It performs guarded Drive acquisition, complete input validation, dry-run, smoke-run, full execution, and resume;
+the operational checklist is in [`docs/colab-ml.md`](docs/colab-ml.md).
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,

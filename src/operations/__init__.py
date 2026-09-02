@@ -10,12 +10,14 @@ from src.operations.ml_pipeline import (
     PipelineConfig,
     PipelineDryRunReport,
     PipelineStage,
+    PipelineStatus,
     SmokeRunReport,
     SmokeSampleManifest,
     create_smoke_sample,
     dry_run_pipeline,
     render_dry_run_report,
     render_smoke_run_report,
+    run_pipeline,
     run_smoke_pipeline,
 )
 
@@ -29,11 +31,13 @@ __all__ = [
     "PipelineConfig",
     "PipelineDryRunReport",
     "PipelineStage",
+    "PipelineStatus",
     "SmokeRunReport",
     "SmokeSampleManifest",
     "create_smoke_sample",
     "dry_run_pipeline",
     "render_dry_run_report",
     "render_smoke_run_report",
+    "run_pipeline",
     "run_smoke_pipeline",
 ]
