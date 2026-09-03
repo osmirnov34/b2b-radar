@@ -89,6 +89,9 @@ explicitly non-publishable, and stop before manual evaluation and export.
 For a hosted GPU workflow, open [`notebooks/00_colab_pipeline.ipynb`](notebooks/00_colab_pipeline.ipynb) in Google
 Colab. It performs guarded Drive acquisition, complete input validation, dry-run, smoke-run, full execution, and resume;
 the operational checklist is in [`docs/colab-ml.md`](docs/colab-ml.md).
+Live stage progress is documented in [`docs/ml-progress.md`](docs/ml-progress.md). Analyze a persisted run without
+changing its checkpoints in [`notebooks/02_colab_results_analysis.ipynb`](notebooks/02_colab_results_analysis.ipynb);
+the reporting contract is documented in [`docs/ml-results-analysis.md`](docs/ml-results-analysis.md).
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,

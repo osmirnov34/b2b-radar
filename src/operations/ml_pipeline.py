@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
 from datetime import UTC, datetime
@@ -30,6 +31,14 @@ from src.ml.inspection import DatasetFormat, compare_record_count, detect_datase
 from src.ml.outlier_reassignment import OutlierReassignmentConfig
 from src.ml.schemas import ExportedComment
 from src.ml.topic_representation import TopicRepresentationConfig
+from src.operations.progress import (
+    CompositeProgressCallback,
+    ProgressCallback,
+    ProgressEvent,
+    ProgressJournal,
+    ProgressStatus,
+    make_progress_event,
+)
 from src.web.ml_snapshot import load_public_snapshot
 
 if TYPE_CHECKING:
@@ -40,6 +49,7 @@ _DRY_RUN_STRUCTURE_SAMPLE = 100
 _COMMAND_PREFIX_LENGTH = 2
 _MINIMUM_COMMAND_LENGTH = 3
 _MINIMUM_SMOKE_RECORDS = 20
+_HEARTBEAT_SECONDS = 30.0
 
 
 class _PipelineModel(BaseModel):
@@ -1608,6 +1618,57 @@ def _evaluation_status(stage_dirs: dict[PipelineStage, Path]) -> tuple[Evaluatio
     return metrics.status, metrics.preliminary
 
 
+def _execute_with_heartbeat(
+    executor: StageExecutor,
+    command: list[str],
+    log_path: Path,
+    cwd: Path,
+    *,
+    run_id: str,
+    stage: PipelineStage,
+    progress_callback: ProgressCallback,
+    heartbeat_interval: float = _HEARTBEAT_SECONDS,
+) -> int:
+    """Execute a blocking stage while emitting elapsed-time heartbeats from a helper thread."""
+    if heartbeat_interval <= 0:
+        msg = "heartbeat interval must be positive"
+        raise ValueError(msg)
+    stopped = threading.Event()
+    started = time.monotonic()
+    stage_number = list(PipelineStage).index(stage) + 1
+
+    def pulse() -> None:
+        while not stopped.wait(heartbeat_interval):
+            _safe_progress_report(
+                progress_callback,
+                make_progress_event(
+                    run_id=run_id,
+                    stage=stage.value,
+                    stage_number=stage_number,
+                    status=ProgressStatus.HEARTBEAT,
+                    elapsed_seconds=time.monotonic() - started,
+                    message="stage process is still running",
+                ),
+            )
+
+    worker = threading.Thread(target=pulse, name="pipeline-heartbeat", daemon=True)
+    worker.start()
+    try:
+        return executor(command, log_path, cwd)
+    finally:
+        stopped.set()
+        worker.join()
+
+
+def _safe_progress_report(callback: ProgressCallback, event: ProgressEvent) -> None:
+    """Keep an optional observer failure from changing pipeline computation."""
+    try:
+        callback(event)
+    except Exception as exc:  # noqa: BLE001 -- observers are outside the computation contract.
+        sys.stderr.write(f"Progress reporting failed: {type(exc).__name__}\n")
+        sys.stderr.flush()
+
+
 def run_pipeline(
     config: PipelineConfig,
     project_root: Path,
@@ -1617,6 +1678,8 @@ def run_pipeline(
     restart_from: PipelineStage | None = None,
     stop_after: PipelineStage | None = None,
     executor: StageExecutor = _default_executor,
+    progress_callback: ProgressCallback | None = None,
+    echo_progress: bool = False,
 ) -> PipelineRunManifest:
     """Run stages in order, preserving checksummed resume state after every process."""
     context = _pipeline_context(
@@ -1643,6 +1706,32 @@ def run_pipeline(
         msg = f"run directory already exists: {active_run_dir}"
         raise FileExistsError(msg)
     active_run_dir.mkdir(parents=True, exist_ok=True)
+    journal = ProgressJournal(active_run_dir, echo=echo_progress)
+    observer: ProgressCallback = (
+        CompositeProgressCallback(journal, progress_callback) if progress_callback is not None else journal
+    )
+
+    def emit(
+        stage: PipelineStage | None,
+        status: ProgressStatus,
+        *,
+        elapsed_seconds: float | None = None,
+        message: str = "",
+        metrics: dict[str, int | float | str | bool] | None = None,
+    ) -> None:
+        _safe_progress_report(
+            observer,
+            make_progress_event(
+                run_id=run_id,
+                stage=stage.value if stage is not None else "pipeline",
+                stage_number=list(PipelineStage).index(stage) + 1 if stage is not None else 0,
+                status=status,
+                elapsed_seconds=elapsed_seconds,
+                message=message,
+                metrics=metrics,
+            ),
+        )
+
     now = datetime.now(UTC)
     if resume:
         manifest = PipelineRunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
@@ -1700,10 +1789,14 @@ def run_pipeline(
         return state
 
     persist(PipelineStatus.RUNNING, None)
+    emit(None, ProgressStatus.RESUMED if resume else ProgressStatus.STARTED)
     for index, stage in enumerate(PipelineStage):
         if stage in completed:
+            emit(stage, ProgressStatus.SKIPPED, message="verified completed stage")
             if stop_after == stage:
-                return persist(PipelineStatus.PARTIAL, None, "partial run completed at requested stage")
+                result = persist(PipelineStatus.PARTIAL, None, "partial run completed at requested stage")
+                emit(None, ProgressStatus.COMPLETED, message=result.message)
+                return result
             continue
         stage_dir = stage_dirs[stage]
         stage_dir.mkdir(parents=True, exist_ok=True)
@@ -1712,8 +1805,21 @@ def run_pipeline(
         force = restart_index is not None and index >= restart_index
         command = _command(stage, config, resolved_root, stage_dirs, force=force)
         persist(PipelineStatus.RUNNING, stage)
+        emit(stage, ProgressStatus.RESUMED if force else ProgressStatus.STARTED)
         started = time.monotonic()
-        return_code = executor(command, log_path, resolved_root)
+        try:
+            return_code = _execute_with_heartbeat(
+                executor,
+                command,
+                log_path,
+                resolved_root,
+                run_id=run_id,
+                stage=stage,
+                progress_callback=observer,
+            )
+        except BaseException:
+            emit(stage, ProgressStatus.FAILED, message="stage executor was interrupted or raised an exception")
+            raise
         duration = time.monotonic() - started
         marker = markers[stage]
         marker_hash = _sha256_file(marker) if marker.is_file() else None
@@ -1731,20 +1837,42 @@ def run_pipeline(
         )
         records.append(record)
         if record.status == StageStatus.FAILED:
+            emit(
+                stage,
+                ProgressStatus.FAILED,
+                elapsed_seconds=duration,
+                message="stage failed; see its local log",
+                metrics={"return_code": return_code},
+            )
             return persist(PipelineStatus.FAILED, stage, f"stage {stage.value} failed; see its local log")
+        emit(
+            stage,
+            ProgressStatus.COMPLETED,
+            elapsed_seconds=duration,
+            message="verified stage marker saved",
+            metrics={"return_code": return_code},
+        )
         if stage == PipelineStage.EVALUATION:
             status, preliminary = _evaluation_status(stage_dirs)
             if preliminary:
-                return persist(
+                result = persist(
                     PipelineStatus.AWAITING_REVIEW,
                     None,
                     "manual annotations and completed validation are required before export",
                 )
+                emit(None, ProgressStatus.WARNING, message=result.message)
+                return result
             if status != EvaluationStatus.PASS:
-                return persist(PipelineStatus.FAILED, stage, "evaluation did not pass publication thresholds")
+                result = persist(PipelineStatus.FAILED, stage, "evaluation did not pass publication thresholds")
+                emit(None, ProgressStatus.FAILED, message=result.message)
+                return result
         if stop_after == stage:
-            return persist(PipelineStatus.PARTIAL, None, "partial run completed at requested stage")
-    return persist(PipelineStatus.COMPLETED, None, "all pipeline stages completed")
+            result = persist(PipelineStatus.PARTIAL, None, "partial run completed at requested stage")
+            emit(None, ProgressStatus.COMPLETED, message=result.message)
+            return result
+    result = persist(PipelineStatus.COMPLETED, None, "all pipeline stages completed")
+    emit(None, ProgressStatus.COMPLETED, message=result.message)
+    return result
 
 
 def _smoke_group_key(comment: ExportedComment) -> str:
@@ -1961,6 +2089,8 @@ def run_smoke_pipeline(
     seed: int = 42,
     config_path: Path | None = None,
     executor: StageExecutor = _default_executor,
+    progress_callback: ProgressCallback | None = None,
+    echo_progress: bool = False,
 ) -> SmokeRunReport:
     """Run stages 1-11 on a deterministic local sample; never evaluate or publish it."""
     source_preflight = dry_run_pipeline(config, project_root)
@@ -2000,6 +2130,8 @@ def run_smoke_pipeline(
         run_dir=run_dir,
         stop_after=_SMOKE_LAST_STAGE,
         executor=executor,
+        progress_callback=progress_callback,
+        echo_progress=echo_progress,
     )
     checks = _smoke_artifact_checks(run_dir, manifest)
     successful = manifest.status == PipelineStatus.PARTIAL and len(manifest.stages) == _SMOKE_STAGE_COUNT

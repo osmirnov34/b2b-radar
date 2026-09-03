@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 from collections import Counter
 from pathlib import Path
@@ -135,6 +136,51 @@ def test_pipeline_runs_partially_and_resumes_only_verified_stages(tmp_path: Path
     )
     assert [record.stage for record in resumed.stages] == list(PipelineStage)[:11]
     assert len(list(run_dir.glob("pipeline-config*.json"))) == 2
+
+
+def test_pipeline_persists_progress_without_changing_stage_contracts(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="observable")
+    events = []
+
+    result = run_pipeline(
+        config,
+        PROJECT_ROOT,
+        stop_after=PipelineStage.INSPECTION,
+        executor=_successful_executor,
+        progress_callback=events.append,
+    )
+
+    journal_path = tmp_path / "runs/observable/observability/progress-events.jsonl"
+    statuses = [json.loads(line)["status"] for line in journal_path.read_text().splitlines()]
+    assert result.status == PipelineStatus.PARTIAL
+    assert statuses == ["started", "started", "completed", "completed"]
+    assert [event.status.value for event in events] == statuses
+    assert result.stages[0].marker_sha256 is not None
+
+
+def test_resume_accepts_run_without_legacy_observability_directory(tmp_path: Path) -> None:
+    config = _config(tmp_path, run_id="legacy-resume")
+    run_dir = tmp_path / "runs/legacy-resume"
+    run_pipeline(
+        config,
+        PROJECT_ROOT,
+        stop_after=PipelineStage.INSPECTION,
+        executor=_successful_executor,
+    )
+    shutil.rmtree(run_dir / "observability")
+
+    resumed = run_pipeline(
+        config,
+        PROJECT_ROOT,
+        run_dir=run_dir,
+        resume=True,
+        stop_after=PipelineStage.SPLIT,
+        executor=_successful_executor,
+    )
+
+    assert resumed.status == PipelineStatus.PARTIAL
+    assert [record.stage for record in resumed.stages] == [PipelineStage.INSPECTION, PipelineStage.SPLIT]
+    assert (run_dir / "observability/progress-events.jsonl").is_file()
 
 
 def test_dry_run_is_read_only_and_builds_commands_without_subprocess(

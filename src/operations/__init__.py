@@ -20,8 +20,18 @@ from src.operations.ml_pipeline import (
     run_pipeline,
     run_smoke_pipeline,
 )
+from src.operations.progress import (
+    CompositeProgressCallback,
+    ProgressCallback,
+    ProgressEvent,
+    ProgressJournal,
+    ProgressStatus,
+    make_progress_event,
+    render_progress_event,
+)
 
 __all__ = [
+    "CompositeProgressCallback",
     "DryRunCheck",
     "DryRunDatasetSummary",
     "DryRunResourceEstimate",
@@ -32,11 +42,17 @@ __all__ = [
     "PipelineDryRunReport",
     "PipelineStage",
     "PipelineStatus",
+    "ProgressCallback",
+    "ProgressEvent",
+    "ProgressJournal",
+    "ProgressStatus",
     "SmokeRunReport",
     "SmokeSampleManifest",
     "create_smoke_sample",
     "dry_run_pipeline",
+    "make_progress_event",
     "render_dry_run_report",
+    "render_progress_event",
     "render_smoke_run_report",
     "run_pipeline",
     "run_smoke_pipeline",

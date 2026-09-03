@@ -40,6 +40,7 @@ def test_colab_notebook_keeps_expensive_and_destructive_actions_guarded() -> Non
     assert "if RUN_SMOKE:" in source
     assert "if RUN_FULL:" in source
     assert "dry_report.can_run" in source
+    assert source.count("echo_progress=True") == 2
     assert "smoke_report.full_run_allowed" in source
     assert "publish_snapshot" not in source
     assert "rm -rf" not in source

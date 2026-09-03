@@ -55,3 +55,7 @@ RESUME_RUN_DIR = "/content/drive/MyDrive/b2b-radar/ml-runs/<run-id>"
 
 If dry-run identifies an interrupted stage, set `RESTART_FROM` only to the stage it reports. Publication is deliberately
 absent from this notebook; manual evaluation and a reviewed production snapshot remain separate operations.
+
+Smoke and full execution print versioned stage events and elapsed-time heartbeats. The same aggregate events are stored
+under `<run-dir>/observability/`; see `docs/ml-progress.md`. After topic artifacts exist, use the independent read-only
+`notebooks/02_colab_results_analysis.ipynb` described in `docs/ml-results-analysis.md` for charts and review tables.
