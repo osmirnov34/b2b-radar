@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -7,16 +8,22 @@ import pytest
 
 from src.ml import reporting
 from src.ml.cleaning_dataset import DatasetCleaningManifest, DatasetCleaningStats
+from src.ml.clustering import ClusteringManifest, ClusterSummary, HDBSCANConfig
 from src.ml.corpus import CorpusManifest, CorpusStats
 from src.ml.inspection import DatasetInspection
 from src.ml.models import CleaningReason, DeduplicationStats
+from src.ml.outlier_reassignment import FinalClusterSummary, OutlierReassignmentManifest
 from src.ml.reporting import (
     AnalysisArtifacts,
     AnalysisSummary,
+    ClusterCard,
     DataScope,
+    ReassignmentStatus,
     ReportManifest,
     TopicSummaryRow,
+    build_cluster_cards,
     build_data_lineage,
+    get_cluster_card,
     processing_flow,
     stratified_plot_indices,
     topic_summary_rows,
@@ -24,7 +31,7 @@ from src.ml.reporting import (
 )
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName, SplitStats
-from src.ml.topic_representation import TopicKeyword, TopicRepresentation
+from src.ml.topic_representation import TopicKeyword, TopicRepresentation, TopicRepresentationManifest
 
 
 def _artifacts(tmp_path: Path) -> AnalysisArtifacts:
@@ -155,6 +162,95 @@ def _lineage_artifacts(
     return AnalysisArtifacts(**{**artifacts.__dict__, "corpus": corpus})
 
 
+def _card_artifacts(tmp_path: Path, *, reassigned: bool = False) -> AnalysisArtifacts:
+    artifacts = _artifacts(tmp_path)
+    summary_path = artifacts.run_dir / "09-clustering/cluster-summary.jsonl"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    cluster_summary = ClusterSummary(
+        cluster_id=0,
+        records=3,
+        corpus_share=0.75,
+        mean_probability=0.8,
+        median_probability=0.82,
+        minimum_probability=0.61,
+        comments=2,
+        replies=1,
+        languages={"ru": 2, "en": 1},
+        unique_videos=2,
+        minimum_record_index=0,
+    )
+    summary_path.write_text(f"{cluster_summary.model_dump_json()}\n", encoding="utf-8")
+    clustering = ClusteringManifest.model_construct(
+        config=HDBSCANConfig(minimum_probability=0.5),
+        summary_path=str(summary_path),
+        summary_sha256=_sha256(summary_path),
+    )
+    topics_manifest = TopicRepresentationManifest.model_construct(
+        representations_path=str(artifacts.run_dir / "10-topics/topic-representations.jsonl"),
+    )
+    result = replace(artifacts, clustering=clustering, topics_manifest=topics_manifest)
+    if not reassigned:
+        return result
+
+    final_summary_path = artifacts.run_dir / "11-reassignment/final-cluster-summary.jsonl"
+    final_summary_path.parent.mkdir(parents=True, exist_ok=True)
+    final_summary = FinalClusterSummary(
+        topic_id=0,
+        original_records=3,
+        reassigned_outliers=1,
+        final_records=4,
+        expansion_share=1 / 3,
+        mean_reassignment_similarity=0.88,
+        minimum_reassignment_similarity=0.88,
+        comments=3,
+        replies=1,
+        languages={"ru": 3, "en": 1},
+        unique_videos=3,
+    )
+    final_summary_path.write_text(f"{final_summary.model_dump_json()}\n", encoding="utf-8")
+    reassignment = OutlierReassignmentManifest.model_construct(
+        eligible_topics=[0],
+        ineligible_topics={},
+        summary_path=str(final_summary_path),
+        summary_sha256=_sha256(final_summary_path),
+    )
+    final_analysis_summary = artifacts.summary.model_copy(
+        update={"outliers": 0, "outlier_share": 0.0},
+    )
+    return replace(
+        result,
+        labels=np.asarray([0, 0, 0, 0], dtype=np.int64),
+        confidence=np.asarray([0.9, 0.8, 0.7, 0.88], dtype=np.float32),
+        reassignment=reassignment,
+        summary=final_analysis_summary,
+    )
+
+
+def _excluded_card_artifacts(tmp_path: Path) -> AnalysisArtifacts:
+    artifacts = _card_artifacts(tmp_path)
+    final_summary_path = artifacts.run_dir / "11-reassignment/final-cluster-summary.jsonl"
+    final_summary_path.parent.mkdir(parents=True, exist_ok=True)
+    final_summary = FinalClusterSummary(
+        topic_id=0,
+        original_records=3,
+        reassigned_outliers=0,
+        final_records=3,
+        expansion_share=0,
+        comments=2,
+        replies=1,
+        languages={"ru": 2, "en": 1},
+        unique_videos=2,
+    )
+    final_summary_path.write_text(f"{final_summary.model_dump_json()}\n", encoding="utf-8")
+    reassignment = OutlierReassignmentManifest.model_construct(
+        eligible_topics=[],
+        ineligible_topics={0: "insufficient high-confidence centroid members"},
+        summary_path=str(final_summary_path),
+        summary_sha256=_sha256(final_summary_path),
+    )
+    return replace(artifacts, reassignment=reassignment)
+
+
 def test_stratified_plot_indices_are_deterministic_and_keep_every_label() -> None:
     labels = np.repeat(np.asarray([-1, 0, 1, 2], dtype=np.int64), [80, 10, 5, 5])
 
@@ -244,3 +340,67 @@ def test_data_lineage_blocks_tampered_development_split(
 def test_data_lineage_public_functions_have_docstrings() -> None:
     assert inspect.getdoc(build_data_lineage)
     assert inspect.getdoc(processing_flow)
+
+
+def test_cluster_card_uses_verified_aggregate_hdbscan_summary(tmp_path: Path) -> None:
+    artifacts = _card_artifacts(tmp_path)
+    before = {path: path.stat().st_mtime_ns for path in artifacts.run_dir.rglob("*") if path.is_file()}
+
+    cards = build_cluster_cards(artifacts)
+
+    assert cards == [
+        ClusterCard(
+            topic_id=0,
+            name="delivery / order",
+            keywords=["delivery"],
+            original_records=3,
+            final_records=3,
+            final_corpus_share=0.75,
+            comments=2,
+            replies=1,
+            languages={"ru": 2, "en": 1},
+            unique_videos=2,
+            original_mean_probability=0.8,
+            original_median_probability=0.82,
+            original_minimum_probability=0.61,
+            representative_records=1,
+            reassigned_outliers=0,
+            reassignment_status=ReassignmentStatus.NOT_RUN,
+            pipeline_status="awaiting_review",
+            warnings=[],
+            sources=cards[0].sources,
+        ),
+    ]
+    assert cards[0].sources["clustering"].field == "cluster_id=0"
+    assert {path: path.stat().st_mtime_ns for path in artifacts.run_dir.rglob("*") if path.is_file()} == before
+    assert get_cluster_card(cards, 0) == cards[0]
+    with pytest.raises(KeyError, match="unknown topic ID"):
+        get_cluster_card(cards, 99)
+
+
+def test_cluster_card_keeps_reassignment_similarity_separate_from_probability(tmp_path: Path) -> None:
+    card = build_cluster_cards(_card_artifacts(tmp_path, reassigned=True))[0]
+
+    assert card.original_mean_probability == 0.8
+    assert card.reassigned_outliers == 1
+    assert card.mean_reassignment_similarity == 0.88
+    assert card.final_records == 4
+    assert card.reassignment_status == ReassignmentStatus.ELIGIBLE
+    assert "reassignment" in card.sources
+
+
+def test_cluster_cards_reject_tampered_summary(tmp_path: Path) -> None:
+    artifacts = _card_artifacts(tmp_path)
+    Path(artifacts.clustering.summary_path).write_text("tampered\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        build_cluster_cards(artifacts)
+
+
+def test_cluster_card_explains_reassignment_exclusion(tmp_path: Path) -> None:
+    card = build_cluster_cards(_excluded_card_artifacts(tmp_path))[0]
+
+    assert card.reassignment_status == ReassignmentStatus.EXCLUDED
+    assert card.reassignment_exclusion_reason == "insufficient high-confidence centroid members"
+    assert card.reassigned_outliers == 0
+    assert "topic was excluded from outlier reassignment" in card.warnings

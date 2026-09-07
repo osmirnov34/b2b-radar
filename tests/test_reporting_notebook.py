@@ -47,6 +47,12 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "Development text flow" in source
     assert "source_field" in source
     assert "Text unit:" in source
+    assert "SELECTED_TOPIC_ID = 0" in source
+    assert "build_cluster_cards(artifacts)" in source
+    assert "get_cluster_card(cluster_cards, SELECTED_TOPIC_ID)" in source
+    assert "original_mean_hdbscan_probability" in source
+    assert "mean_reassignment_cosine_similarity" in source
+    assert "reassignment_exclusion_reason" in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source
     assert "Language composition by topic" in source

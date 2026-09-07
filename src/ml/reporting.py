@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.ml.cleaning_dataset import DatasetCleaningManifest
-from src.ml.clustering import ClusteringManifest
+from src.ml.clustering import ClusteringManifest, ClusterSummary
 from src.ml.corpus import CorpusManifest
 from src.ml.inspection import DatasetInspection
-from src.ml.outlier_reassignment import OutlierReassignmentManifest
+from src.ml.outlier_reassignment import FinalClusterSummary, OutlierReassignmentManifest
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName
 from src.ml.topic_representation import TopicRepresentation, TopicRepresentationManifest
@@ -55,6 +55,46 @@ class TopicSummaryRow(_ReportModel):
     keywords: list[str]
 
 
+class DataSourceReference(_ReportModel):
+    """Identify the persisted manifest field from which a metric originates."""
+
+    path: str
+    field: str
+
+
+class ReassignmentStatus(StrEnum):
+    NOT_RUN = "not_run"
+    ELIGIBLE = "eligible"
+    EXCLUDED = "excluded"
+
+
+class ClusterCard(_ReportModel):
+    """Summarize one topic without mixing incompatible assignment scores."""
+
+    topic_id: int = Field(ge=0)
+    name: str
+    keywords: list[str]
+    original_records: int = Field(ge=1)
+    final_records: int = Field(ge=1)
+    final_corpus_share: float = Field(gt=0, le=1)
+    comments: int = Field(ge=0)
+    replies: int = Field(ge=0)
+    languages: dict[str, int]
+    unique_videos: int = Field(ge=0)
+    original_mean_probability: float = Field(ge=0, le=1)
+    original_median_probability: float = Field(ge=0, le=1)
+    original_minimum_probability: float = Field(ge=0, le=1)
+    representative_records: int = Field(ge=0)
+    reassigned_outliers: int = Field(ge=0)
+    mean_reassignment_similarity: float | None = Field(default=None, ge=-1, le=1)
+    minimum_reassignment_similarity: float | None = Field(default=None, ge=-1, le=1)
+    reassignment_status: ReassignmentStatus
+    reassignment_exclusion_reason: str | None = None
+    pipeline_status: str
+    warnings: list[str]
+    sources: dict[str, DataSourceReference]
+
+
 class ProcessingFlowStep(_ReportModel):
     stage: str
     records: int = Field(ge=0)
@@ -73,13 +113,6 @@ class DataEntity(StrEnum):
     REPLY = "reply"
     TEXT_UNIT = "text_unit"
     CLUSTER_ASSIGNMENT = "cluster_assignment"
-
-
-class DataSourceReference(_ReportModel):
-    """Identify the persisted manifest field from which a metric originates."""
-
-    path: str
-    field: str
 
 
 class DataLineageMetric(_ReportModel):
@@ -159,6 +192,18 @@ class AnalysisArtifacts:
     topics: tuple[TopicRepresentation, ...]
     reassignment: OutlierReassignmentManifest | None
     summary: AnalysisSummary
+
+
+@dataclass(frozen=True)
+class _ResolvedClusterCounts:
+    final_records: int
+    comments: int
+    replies: int
+    languages: dict[str, int]
+    unique_videos: int
+    reassigned_outliers: int = 0
+    mean_reassignment_similarity: float | None = None
+    minimum_reassignment_similarity: float | None = None
 
 
 def _sha256_file(path: Path) -> str:
@@ -290,6 +335,214 @@ def topic_summary_rows(artifacts: AnalysisArtifacts) -> list[TopicSummaryRow]:
         )
         for topic in artifacts.topics
     ]
+
+
+def _load_cluster_summaries(artifacts: AnalysisArtifacts) -> tuple[ClusterSummary, ...]:
+    """Load checksum-verified original HDBSCAN summaries for reporting."""
+    path = _verified_path(
+        artifacts.run_dir,
+        artifacts.clustering.summary_path,
+        artifacts.clustering.summary_sha256,
+    )
+    with path.open(encoding="utf-8") as source:
+        return tuple(ClusterSummary.model_validate_json(line) for line in source if line.strip())
+
+
+def _load_final_cluster_summaries(artifacts: AnalysisArtifacts) -> tuple[FinalClusterSummary, ...]:
+    """Load checksum-verified post-reassignment summaries when that stage exists."""
+    if artifacts.reassignment is None:
+        return ()
+    path = _verified_path(
+        artifacts.run_dir,
+        artifacts.reassignment.summary_path,
+        artifacts.reassignment.summary_sha256,
+    )
+    with path.open(encoding="utf-8") as source:
+        return tuple(FinalClusterSummary.model_validate_json(line) for line in source if line.strip())
+
+
+def _validate_cluster_summary_ids(
+    topics: tuple[TopicRepresentation, ...],
+    originals: tuple[ClusterSummary, ...],
+    finals: tuple[FinalClusterSummary, ...],
+) -> None:
+    """Require summary rows to follow normalized contiguous topic IDs."""
+    expected_ids = list(range(len(topics)))
+    if [summary.cluster_id for summary in originals] != expected_ids:
+        msg = "original cluster summaries do not match normalized topic IDs"
+        raise ValueError(msg)
+    if finals and [summary.topic_id for summary in finals] != expected_ids:
+        msg = "final cluster summaries do not match normalized topic IDs"
+        raise ValueError(msg)
+
+
+def _resolve_cluster_counts(
+    topic_id: int,
+    original: ClusterSummary,
+    final: FinalClusterSummary | None,
+) -> _ResolvedClusterCounts:
+    """Resolve final counts while preserving the original HDBSCAN statistics."""
+    if final is None:
+        result = _ResolvedClusterCounts(
+            final_records=original.records,
+            comments=original.comments,
+            replies=original.replies,
+            languages=original.languages,
+            unique_videos=original.unique_videos,
+        )
+    else:
+        if final.original_records != original.records:
+            msg = f"topic {topic_id} original count changed during reassignment"
+            raise ValueError(msg)
+        result = _ResolvedClusterCounts(
+            final_records=final.final_records,
+            comments=final.comments,
+            replies=final.replies,
+            languages=final.languages,
+            unique_videos=final.unique_videos,
+            reassigned_outliers=final.reassigned_outliers,
+            mean_reassignment_similarity=final.mean_reassignment_similarity,
+            minimum_reassignment_similarity=final.minimum_reassignment_similarity,
+        )
+    if result.comments + result.replies != result.final_records:
+        msg = f"topic {topic_id} comment and reply counts do not match final records"
+        raise ValueError(msg)
+    return result
+
+
+def _reassignment_details(
+    artifacts: AnalysisArtifacts,
+    topic_id: int,
+) -> tuple[ReassignmentStatus, str | None]:
+    """Describe whether one topic was eligible for outlier reassignment."""
+    if artifacts.reassignment is None:
+        return ReassignmentStatus.NOT_RUN, None
+    if topic_id in artifacts.reassignment.eligible_topics:
+        return ReassignmentStatus.ELIGIBLE, None
+    reason = artifacts.reassignment.ineligible_topics.get(topic_id, "reason not recorded")
+    return ReassignmentStatus.EXCLUDED, reason
+
+
+def _cluster_card_sources(artifacts: AnalysisArtifacts, topic_id: int) -> dict[str, DataSourceReference]:
+    """Return manifest rows that support a cluster card."""
+    sources = {
+        "clustering": DataSourceReference(
+            path=artifacts.clustering.summary_path,
+            field=f"cluster_id={topic_id}",
+        ),
+        "topic": DataSourceReference(
+            path=artifacts.topics_manifest.representations_path,
+            field=f"topic_id={topic_id}",
+        ),
+    }
+    if artifacts.reassignment is not None:
+        sources["reassignment"] = DataSourceReference(
+            path=artifacts.reassignment.summary_path,
+            field=f"topic_id={topic_id}",
+        )
+    return sources
+
+
+def _build_cluster_card(
+    artifacts: AnalysisArtifacts,
+    topic: TopicRepresentation,
+    original: ClusterSummary,
+    final: FinalClusterSummary | None,
+) -> ClusterCard:
+    """Build one validated aggregate card from aligned stage summaries."""
+    if topic.records != original.records:
+        msg = f"topic {topic.topic_id} representation count does not match clustering summary"
+        raise ValueError(msg)
+    counts = _resolve_cluster_counts(topic.topic_id, original, final)
+    reassignment_status, exclusion_reason = _reassignment_details(artifacts, topic.topic_id)
+    warnings = []
+    if original.mean_probability < artifacts.clustering.config.minimum_probability:
+        warnings.append("original mean membership probability is below the configured quality threshold")
+    if reassignment_status == ReassignmentStatus.EXCLUDED:
+        warnings.append("topic was excluded from outlier reassignment")
+    return ClusterCard(
+        topic_id=topic.topic_id,
+        name=topic.name,
+        keywords=[keyword.term for keyword in topic.keywords],
+        original_records=original.records,
+        final_records=counts.final_records,
+        final_corpus_share=counts.final_records / artifacts.summary.records,
+        comments=counts.comments,
+        replies=counts.replies,
+        languages=dict(sorted(counts.languages.items(), key=lambda item: (-item[1], item[0]))),
+        unique_videos=counts.unique_videos,
+        original_mean_probability=original.mean_probability,
+        original_median_probability=original.median_probability,
+        original_minimum_probability=original.minimum_probability,
+        representative_records=len(topic.representative_indices),
+        reassigned_outliers=counts.reassigned_outliers,
+        mean_reassignment_similarity=counts.mean_reassignment_similarity,
+        minimum_reassignment_similarity=counts.minimum_reassignment_similarity,
+        reassignment_status=reassignment_status,
+        reassignment_exclusion_reason=exclusion_reason,
+        pipeline_status=artifacts.summary.pipeline_status,
+        warnings=warnings,
+        sources=_cluster_card_sources(artifacts, topic.topic_id),
+    )
+
+
+def build_cluster_cards(artifacts: AnalysisArtifacts) -> list[ClusterCard]:
+    """Build a checksum-bound, aggregate card for every topic.
+
+    Original HDBSCAN membership probabilities and post-reassignment cosine
+    similarities remain in separate fields because their scales have different
+    meanings. Raw comments and author identifiers are never loaded.
+
+    Args:
+        artifacts: Checksum-verified aggregate artifacts for one pipeline run.
+
+    Returns:
+        Cards ordered by contiguous normalized ``topic_id``.
+
+    Raises:
+        FileNotFoundError: If a required cluster summary is missing.
+        ValueError: If summary checksums, topic IDs, or record counts disagree.
+
+    """
+    original_summaries = _load_cluster_summaries(artifacts)
+    final_summaries = _load_final_cluster_summaries(artifacts)
+    _validate_cluster_summary_ids(artifacts.topics, original_summaries, final_summaries)
+    original_by_id = {summary.cluster_id: summary for summary in original_summaries}
+    final_by_id = {summary.topic_id: summary for summary in final_summaries}
+    cards = [
+        _build_cluster_card(
+            artifacts,
+            topic,
+            original_by_id[topic.topic_id],
+            final_by_id.get(topic.topic_id),
+        )
+        for topic in artifacts.topics
+    ]
+    if sum(card.final_records for card in cards) + artifacts.summary.outliers != artifacts.summary.records:
+        msg = "cluster cards and outliers do not account for the final corpus"
+        raise ValueError(msg)
+    return cards
+
+
+def get_cluster_card(cards: list[ClusterCard], topic_id: int) -> ClusterCard:
+    """Return one cluster card by topic ID.
+
+    Args:
+        cards: Cards produced by ``build_cluster_cards``.
+        topic_id: Non-negative normalized topic identifier.
+
+    Returns:
+        The matching cluster card.
+
+    Raises:
+        KeyError: If no card exists for ``topic_id``.
+
+    """
+    try:
+        return next(card for card in cards if card.topic_id == topic_id)
+    except StopIteration as exc:
+        msg = f"unknown topic ID: {topic_id}"
+        raise KeyError(msg) from exc
 
 
 def _lineage_check(name: str, expression: str, passed: bool, details: str) -> DataLineageCheck:

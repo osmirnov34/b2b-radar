@@ -33,6 +33,19 @@ Before rendering, the report verifies input checksums and count invariants acros
 semantic deduplication, corpus, final labels, and optional outlier reassignment. A missing, substituted, or
 inconsistent artifact blocks the report with the failed invariant name instead of drawing a misleading chart.
 
+## Cluster cards
+
+Set `SELECTED_TOPIC_ID` to inspect one normalized topic. `build_cluster_cards()` reads only checksum-verified aggregate
+cluster, topic, and optional reassignment summaries; it does not load raw comments or author identifiers. The card
+shows its name and keywords, original and final size, corpus share, comment/reply and language composition, unique
+videos, representative count, pipeline status, source manifest rows, and any reassignment exclusion reason.
+
+The card deliberately keeps `original_*_probability` separate from `*_reassignment_similarity`. The first values are
+HDBSCAN membership probabilities for original members; the second values are embedding cosine similarities for
+outliers accepted during reassignment. They are different measurements and must not be ranked as one confidence
+scale. If a topic is excluded from reassignment, the card reports the persisted reason and does not imply that its
+outliers were considered for assignment.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;
