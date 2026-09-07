@@ -53,6 +53,13 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "original_mean_hdbscan_probability" in source
     assert "mean_reassignment_cosine_similarity" in source
     assert "reassignment_exclusion_reason" in source
+    assert "TOP_EXAMPLES_PER_CLUSTER = None" in source
+    assert "def show_representative_comments(" in source
+    assert "representative_comments(artifacts, n=n, topic_id=topic_id)" in source
+    assert "if not SHOW_PRIVATE_TEXT" in source
+    assert "centroid_similarity" in source
+    assert "hdbscan_probability" in source
+    assert 'hyperlinks="html"' in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source
     assert "Language composition by topic" in source

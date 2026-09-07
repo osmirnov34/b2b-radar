@@ -46,6 +46,22 @@ outliers accepted during reassignment. They are different measurements and must 
 scale. If a topic is excluded from reassignment, the card reports the persisted reason and does not imply that its
 outliers were considered for assignment.
 
+## Representative comments
+
+Representative text remains hidden until `SHOW_PRIVATE_TEXT=True`. The notebook function
+`show_representative_comments(artifacts, n=None, topic_id=None)` displays the representatives persisted by stage 10,
+their centroid-similarity rank, original HDBSCAN membership probability, text role, video metadata, and a validated
+YouTube source link. Author identity is deliberately omitted.
+
+`n` is not tied to a reporting constant. `None` returns every representative available in the selected source run; a
+positive integer limits each topic independently. Asking for more records than were persisted returns all available
+records without failure or recomputation. For example, a run produced with `representatives_per_topic=5` can display
+up to five representatives per topic, while a future run that persists more works without changing the notebook.
+
+The function verifies the representative file checksum, its agreement with each topic representation, corpus index
+bounds, original HDBSCAN label membership, label/probability alignment, and final corpus row count. It reads the
+existing corpus and never runs embeddings, UMAP, HDBSCAN, topic construction, or reassignment.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

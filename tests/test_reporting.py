@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -20,18 +21,25 @@ from src.ml.reporting import (
     DataScope,
     ReassignmentStatus,
     ReportManifest,
+    RepresentativeComment,
     TopicSummaryRow,
     build_cluster_cards,
     build_data_lineage,
     get_cluster_card,
     processing_flow,
+    representative_comments,
     stratified_plot_indices,
     topic_summary_rows,
     write_analysis_tables,
 )
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName, SplitStats
-from src.ml.topic_representation import TopicKeyword, TopicRepresentation, TopicRepresentationManifest
+from src.ml.topic_representation import (
+    RepresentativeIndices,
+    TopicKeyword,
+    TopicRepresentation,
+    TopicRepresentationManifest,
+)
 
 
 def _artifacts(tmp_path: Path) -> AnalysisArtifacts:
@@ -251,6 +259,66 @@ def _excluded_card_artifacts(tmp_path: Path) -> AnalysisArtifacts:
     return replace(artifacts, reassignment=reassignment)
 
 
+def _representative_artifacts(tmp_path: Path) -> AnalysisArtifacts:
+    artifacts = _card_artifacts(tmp_path)
+    corpus_path = artifacts.run_dir / "07-corpus/final-corpus.jsonl"
+    corpus_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "corpus_id": f"corpus:{index:064x}",
+            "cleaned_record_index": index,
+            "record_id": f"record-{index}",
+            "text": f"Private representative {index}",
+            "clean_text": f"Private representative {index}",
+            "text_kind": "reply" if index == 1 else "comment",
+            "parent_record_id": "record-0" if index == 1 else None,
+            "author": f"private-author-{index}",
+            "detected_language": "ru",
+            "video_id": "X3zn5uGvnaw" if index != 2 else "safeid2",
+            "video_title": f"Video {index}",
+            "video_channel": "Channel",
+            "video_url": "https://www.youtube.com/watch?v=X3zn5uGvnaw" if index == 0 else "",
+            "search_query": "delivery problems",
+        }
+        for index in range(4)
+    ]
+    corpus_path.write_text("".join(f"{json.dumps(row)}\n" for row in rows), encoding="utf-8")
+    labels_path = artifacts.run_dir / "09-clustering/cluster-labels.npy"
+    probabilities_path = artifacts.run_dir / "09-clustering/cluster-probabilities.npy"
+    np.save(labels_path, np.asarray([0, 0, 0, -1], dtype=np.int64), allow_pickle=False)
+    np.save(probabilities_path, np.asarray([0.91, 0.82, 0.73, 0.0], dtype=np.float32), allow_pickle=False)
+    representative_path = artifacts.run_dir / "10-topics/representative-indices.jsonl"
+    representative_path.parent.mkdir(parents=True, exist_ok=True)
+    representatives = RepresentativeIndices(
+        topic_id=0,
+        record_indices=[0, 1, 2],
+        centroid_similarities=[0.97, 0.92, 0.86],
+    )
+    representative_path.write_text(f"{representatives.model_dump_json()}\n", encoding="utf-8")
+    topic = artifacts.topics[0].model_copy(update={"representative_indices": [0, 1, 2]})
+    clustering = artifacts.clustering.model_copy(
+        update={
+            "labels_path": str(labels_path),
+            "labels_sha256": _sha256(labels_path),
+            "probabilities_path": str(probabilities_path),
+            "probabilities_sha256": _sha256(probabilities_path),
+        },
+    )
+    topics_manifest = artifacts.topics_manifest.model_copy(
+        update={
+            "representative_indices_path": str(representative_path),
+            "representative_indices_sha256": _sha256(representative_path),
+        },
+    )
+    return replace(
+        artifacts,
+        corpus_path=corpus_path,
+        clustering=clustering,
+        topics=(topic,),
+        topics_manifest=topics_manifest,
+    )
+
+
 def test_stratified_plot_indices_are_deterministic_and_keep_every_label() -> None:
     labels = np.repeat(np.asarray([-1, 0, 1, 2], dtype=np.int64), [80, 10, 5, 5])
 
@@ -404,3 +472,36 @@ def test_cluster_card_explains_reassignment_exclusion(tmp_path: Path) -> None:
     assert card.reassignment_exclusion_reason == "insufficient high-confidence centroid members"
     assert card.reassigned_outliers == 0
     assert "topic was excluded from outlier reassignment" in card.warnings
+
+
+def test_representative_comments_use_dynamic_per_topic_limit_and_safe_sources(tmp_path: Path) -> None:
+    artifacts = _representative_artifacts(tmp_path)
+    before = {path: path.stat().st_mtime_ns for path in artifacts.run_dir.rglob("*") if path.is_file()}
+
+    all_available = representative_comments(artifacts, n=None)
+    limited = representative_comments(artifacts, n=2, topic_id=0)
+    above_available = representative_comments(artifacts, n=100)
+
+    assert len(all_available) == len(above_available) == 3
+    assert [item.rank for item in limited] == [1, 2]
+    assert [item.centroid_similarity for item in all_available] == [0.97, 0.92, 0.86]
+    assert [item.hdbscan_probability for item in all_available] == pytest.approx([0.91, 0.82, 0.73])
+    assert all_available[0].video_url == "https://www.youtube.com/watch?v=X3zn5uGvnaw"
+    assert all_available[1].video_url == "https://www.youtube.com/watch?v=X3zn5uGvnaw"
+    assert all_available[1].text_kind == "reply"
+    assert "author" not in RepresentativeComment.model_fields
+    assert {path: path.stat().st_mtime_ns for path in artifacts.run_dir.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize("invalid_n", [0, -1, 1.5, True])
+def test_representative_comments_reject_invalid_limit(tmp_path: Path, invalid_n: object) -> None:
+    with pytest.raises(ValueError, match="positive integer or None"):
+        representative_comments(_representative_artifacts(tmp_path), n=invalid_n)
+
+
+def test_representative_comments_reject_tampered_indices(tmp_path: Path) -> None:
+    artifacts = _representative_artifacts(tmp_path)
+    Path(artifacts.topics_manifest.representative_indices_path).write_text("tampered\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        representative_comments(artifacts)

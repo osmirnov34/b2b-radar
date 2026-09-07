@@ -5,22 +5,24 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.ml.cleaning_dataset import DatasetCleaningManifest
 from src.ml.clustering import ClusteringManifest, ClusterSummary
-from src.ml.corpus import CorpusManifest
+from src.ml.corpus import CorpusManifest, CorpusRecord
 from src.ml.inspection import DatasetInspection
 from src.ml.outlier_reassignment import FinalClusterSummary, OutlierReassignmentManifest
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName
-from src.ml.topic_representation import TopicRepresentation, TopicRepresentationManifest
+from src.ml.topic_representation import RepresentativeIndices, TopicRepresentation, TopicRepresentationManifest
 
 if TYPE_CHECKING:
     import numpy as np
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
 
 _MATRIX_DIMENSIONS = 2
 _MINIMUM_PLOT_DIMENSIONS = 2
+_YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 
 
 class _ReportModel(BaseModel):
@@ -93,6 +96,27 @@ class ClusterCard(_ReportModel):
     pipeline_status: str
     warnings: list[str]
     sources: dict[str, DataSourceReference]
+
+
+class RepresentativeComment(_ReportModel):
+    """Expose one representative text with its score and source, but no author."""
+
+    topic_id: int = Field(ge=0)
+    topic_name: str
+    rank: int = Field(ge=1)
+    record_index: int = Field(ge=0)
+    centroid_similarity: float = Field(ge=-1, le=1)
+    hdbscan_probability: float = Field(ge=0, le=1)
+    text: str
+    text_kind: str
+    parent_record_id: str | None = None
+    published_at: datetime | None = None
+    like_count: int = Field(ge=0)
+    duplicate_count: int = Field(ge=1)
+    video_title: str
+    video_channel: str
+    video_url: str
+    search_query: str
 
 
 class ProcessingFlowStep(_ReportModel):
@@ -204,6 +228,15 @@ class _ResolvedClusterCounts:
     reassigned_outliers: int = 0
     mean_reassignment_similarity: float | None = None
     minimum_reassignment_similarity: float | None = None
+
+
+@dataclass(frozen=True)
+class _RepresentativeSelection:
+    topic_id: int
+    topic_name: str
+    rank: int
+    centroid_similarity: float
+    hdbscan_probability: float
 
 
 def _sha256_file(path: Path) -> str:
@@ -543,6 +576,204 @@ def get_cluster_card(cards: list[ClusterCard], topic_id: int) -> ClusterCard:
     except StopIteration as exc:
         msg = f"unknown topic ID: {topic_id}"
         raise KeyError(msg) from exc
+
+
+def _load_representative_indices(artifacts: AnalysisArtifacts) -> tuple[RepresentativeIndices, ...]:
+    """Load checksum-verified representative indexes and centroid similarities."""
+    path = _verified_path(
+        artifacts.run_dir,
+        artifacts.topics_manifest.representative_indices_path,
+        artifacts.topics_manifest.representative_indices_sha256,
+    )
+    with path.open(encoding="utf-8") as source:
+        return tuple(RepresentativeIndices.model_validate_json(line) for line in source if line.strip())
+
+
+def _safe_youtube_url(record: CorpusRecord) -> str:
+    """Return a validated YouTube source URL or an empty string."""
+    if record.video_url:
+        parsed = urlparse(record.video_url)
+        if parsed.scheme in {"http", "https"} and parsed.hostname in {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "youtu.be",
+        }:
+            return record.video_url
+    if _YOUTUBE_VIDEO_ID.fullmatch(record.video_id):
+        return f"https://www.youtube.com/watch?v={record.video_id}"
+    return ""
+
+
+def _load_original_assignments(artifacts: AnalysisArtifacts) -> tuple[Any, Any]:
+    """Load checksum-verified HDBSCAN labels and probabilities."""
+    import numpy as np
+
+    labels_path = _verified_path(
+        artifacts.run_dir,
+        artifacts.clustering.labels_path,
+        artifacts.clustering.labels_sha256,
+    )
+    probabilities_path = _verified_path(
+        artifacts.run_dir,
+        artifacts.clustering.probabilities_path,
+        artifacts.clustering.probabilities_sha256,
+    )
+    labels = np.load(labels_path, mmap_mode="r", allow_pickle=False)
+    probabilities = np.load(probabilities_path, mmap_mode="r", allow_pickle=False)
+    if labels.shape != probabilities.shape or labels.shape != (artifacts.summary.records,):
+        msg = "original labels and probabilities are not aligned with the final corpus"
+        raise ValueError(msg)
+    return labels, probabilities
+
+
+def _validate_representative_topics(
+    artifacts: AnalysisArtifacts,
+    representatives: tuple[RepresentativeIndices, ...],
+    topic_id: int | None,
+) -> dict[int, TopicRepresentation]:
+    """Validate representative topic IDs and return representations by ID."""
+    expected_ids = list(range(len(artifacts.topics)))
+    if [item.topic_id for item in representatives] != expected_ids:
+        msg = "representative index rows do not match normalized topic IDs"
+        raise ValueError(msg)
+    if topic_id is not None and topic_id not in expected_ids:
+        msg = f"unknown topic ID: {topic_id}"
+        raise KeyError(msg)
+    topics = {topic.topic_id: topic for topic in artifacts.topics}
+    for item in representatives:
+        if item.record_indices != topics[item.topic_id].representative_indices:
+            msg = f"topic {item.topic_id} representative indexes disagree with its representation"
+            raise ValueError(msg)
+        if len(item.record_indices) != len(item.centroid_similarities):
+            msg = f"topic {item.topic_id} representative indexes and similarities differ in length"
+            raise ValueError(msg)
+    return topics
+
+
+def _select_topic_representatives(
+    item: RepresentativeIndices,
+    topic: TopicRepresentation,
+    assignments: tuple[Any, Any],
+    n: int | None,
+) -> dict[int, _RepresentativeSelection]:
+    """Select and validate up to ``n`` persisted representatives for one topic."""
+    labels, probabilities = assignments
+    limit = len(item.record_indices) if n is None else min(n, len(item.record_indices))
+    selections: dict[int, _RepresentativeSelection] = {}
+    for rank, (record_index, similarity) in enumerate(
+        zip(item.record_indices[:limit], item.centroid_similarities[:limit], strict=True),
+        start=1,
+    ):
+        if record_index < 0 or record_index >= len(labels):
+            msg = f"topic {item.topic_id} representative index is outside the corpus"
+            raise ValueError(msg)
+        if int(labels[record_index]) != item.topic_id:
+            msg = f"topic {item.topic_id} representative belongs to a different HDBSCAN cluster"
+            raise ValueError(msg)
+        selections[record_index] = _RepresentativeSelection(
+            topic_id=item.topic_id,
+            topic_name=topic.name,
+            rank=rank,
+            centroid_similarity=similarity,
+            hdbscan_probability=float(probabilities[record_index]),
+        )
+    return selections
+
+
+def _representative_selections(
+    artifacts: AnalysisArtifacts,
+    *,
+    n: int | None,
+    topic_id: int | None,
+) -> dict[int, _RepresentativeSelection]:
+    """Validate representative alignment and return selections keyed by corpus row."""
+    representatives = _load_representative_indices(artifacts)
+    topics = _validate_representative_topics(artifacts, representatives, topic_id)
+    assignments = _load_original_assignments(artifacts)
+    selections: dict[int, _RepresentativeSelection] = {}
+    for item in representatives:
+        if topic_id is not None and item.topic_id != topic_id:
+            continue
+        selected = _select_topic_representatives(item, topics[item.topic_id], assignments, n)
+        duplicate_indices = selections.keys() & selected.keys()
+        if duplicate_indices:
+            msg = f"representative corpus index {min(duplicate_indices)} is assigned to multiple topics"
+            raise ValueError(msg)
+        selections.update(selected)
+    return selections
+
+
+def representative_comments(
+    artifacts: AnalysisArtifacts,
+    n: int | None = None,
+    *,
+    topic_id: int | None = None,
+) -> list[RepresentativeComment]:
+    """Read the available representative comments for one or every topic.
+
+    ``n=None`` returns every representative persisted by the source run. A positive
+    ``n`` limits each topic independently; requesting more than the run persisted
+    returns all available representatives without inventing or recomputing examples.
+    The result contains private source text but deliberately excludes author identity.
+
+    Args:
+        artifacts: Checksum-verified artifacts for one pipeline run.
+        n: Optional maximum representatives per topic.
+        topic_id: Optional normalized topic ID; ``None`` selects every topic.
+
+    Returns:
+        Representative comments ordered by topic ID and centroid-similarity rank.
+
+    Raises:
+        FileNotFoundError: If a required representative or assignment artifact is missing.
+        KeyError: If ``topic_id`` does not exist.
+        ValueError: If ``n`` or persisted alignment and checksums are invalid.
+
+    """
+    if n is not None and (type(n) is not int or n < 1):
+        msg = "n must be a positive integer or None"
+        raise ValueError(msg)
+    selections = _representative_selections(artifacts, n=n, topic_id=topic_id)
+    comments = []
+    corpus_rows = 0
+    with artifacts.corpus_path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            record_index = corpus_rows
+            corpus_rows += 1
+            selection = selections.get(record_index)
+            if selection is None:
+                continue
+            record = CorpusRecord.model_validate_json(line)
+            comments.append(
+                RepresentativeComment(
+                    topic_id=selection.topic_id,
+                    topic_name=selection.topic_name,
+                    rank=selection.rank,
+                    record_index=record_index,
+                    centroid_similarity=selection.centroid_similarity,
+                    hdbscan_probability=selection.hdbscan_probability,
+                    text=record.text,
+                    text_kind=record.text_kind.value,
+                    parent_record_id=record.parent_record_id,
+                    published_at=record.published_at,
+                    like_count=record.like_count,
+                    duplicate_count=record.duplicate_count,
+                    video_title=record.video_title,
+                    video_channel=record.video_channel,
+                    video_url=_safe_youtube_url(record),
+                    search_query=record.search_query,
+                ),
+            )
+    if corpus_rows != artifacts.summary.records:
+        msg = f"corpus rows {corpus_rows} do not match assignments {artifacts.summary.records}"
+        raise ValueError(msg)
+    if len(comments) != len(selections):
+        msg = "not every representative index was found in the corpus"
+        raise ValueError(msg)
+    return sorted(comments, key=lambda item: (item.topic_id, item.rank))
 
 
 def _lineage_check(name: str, expression: str, passed: bool, details: str) -> DataLineageCheck:
