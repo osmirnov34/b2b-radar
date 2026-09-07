@@ -62,6 +62,26 @@ The function verifies the representative file checksum, its agreement with each 
 bounds, original HDBSCAN label membership, label/probability alignment, and final corpus row count. It reads the
 existing corpus and never runs embeddings, UMAP, HDBSCAN, topic construction, or reassignment.
 
+## Assignment review
+
+After opting in with `SHOW_PRIVATE_TEXT=True`,
+`show_assignment_review_comments(artifacts, n=10, topic_id=None)` exposes up to `n` questionable records per topic
+and review kind. It provides three separate review queues:
+
+- original cluster members with the lowest HDBSCAN membership probability;
+- accepted outlier reassignments with the smallest cosine-similarity margin;
+- rejected outliers closest to a candidate topic, together with the persisted rejection reason.
+
+An accepted reassignment has an `assigned_topic_id`. For a rejected outlier this field remains empty: its
+`candidate_topic_id` is only the nearest topic considered by stage 11 and must not be presented as the record's
+class. HDBSCAN probability, best and second centroid cosine similarity, and similarity margin remain separate
+columns because they are not interchangeable confidence scores.
+
+The function verifies original assignment checksums, the optional reassignment-decision checksum, decision count,
+unique and in-range indices, original-outlier status, and final-label consistency. Runs without stage 11 can still
+show low-probability original members. The report reads existing artifacts only, omits authors, validates source
+links, and performs no embeddings or clustering work.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

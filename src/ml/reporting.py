@@ -19,7 +19,12 @@ from src.ml.cleaning_dataset import DatasetCleaningManifest
 from src.ml.clustering import ClusteringManifest, ClusterSummary
 from src.ml.corpus import CorpusManifest, CorpusRecord
 from src.ml.inspection import DatasetInspection
-from src.ml.outlier_reassignment import FinalClusterSummary, OutlierReassignmentManifest
+from src.ml.outlier_reassignment import (
+    FinalClusterSummary,
+    OutlierDecision,
+    OutlierDecisionReason,
+    OutlierReassignmentManifest,
+)
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName
 from src.ml.topic_representation import RepresentativeIndices, TopicRepresentation, TopicRepresentationManifest
@@ -107,6 +112,40 @@ class RepresentativeComment(_ReportModel):
     record_index: int = Field(ge=0)
     centroid_similarity: float = Field(ge=-1, le=1)
     hdbscan_probability: float = Field(ge=0, le=1)
+    text: str
+    text_kind: str
+    parent_record_id: str | None = None
+    published_at: datetime | None = None
+    like_count: int = Field(ge=0)
+    duplicate_count: int = Field(ge=1)
+    video_title: str
+    video_channel: str
+    video_url: str
+    search_query: str
+
+
+class AssignmentReviewKind(StrEnum):
+    """Identify why an existing corpus record needs human inspection."""
+
+    LOW_HDBSCAN_PROBABILITY = "low_hdbscan_probability"
+    REASSIGNED_OUTLIER = "reassigned_outlier"
+    REJECTED_OUTLIER = "rejected_outlier"
+
+
+class AssignmentReviewComment(_ReportModel):
+    """Expose one questionable assignment without conflating its score types."""
+
+    review_kind: AssignmentReviewKind
+    rank: int = Field(ge=1)
+    record_index: int = Field(ge=0)
+    assigned_topic_id: int | None = Field(default=None, ge=0)
+    candidate_topic_id: int | None = Field(default=None, ge=0)
+    topic_name: str | None = None
+    hdbscan_probability: float | None = Field(default=None, ge=0, le=1)
+    best_cosine_similarity: float | None = Field(default=None, ge=-1, le=1)
+    second_cosine_similarity: float | None = Field(default=None, ge=-1, le=1)
+    similarity_margin: float | None = Field(default=None, ge=0, le=2)
+    decision_reason: OutlierDecisionReason | None = None
     text: str
     text_kind: str
     parent_record_id: str | None = None
@@ -237,6 +276,20 @@ class _RepresentativeSelection:
     rank: int
     centroid_similarity: float
     hdbscan_probability: float
+
+
+@dataclass(frozen=True)
+class _AssignmentReviewSelection:
+    review_kind: AssignmentReviewKind
+    rank: int
+    assigned_topic_id: int | None
+    candidate_topic_id: int | None
+    topic_name: str | None
+    hdbscan_probability: float | None = None
+    best_cosine_similarity: float | None = None
+    second_cosine_similarity: float | None = None
+    similarity_margin: float | None = None
+    decision_reason: OutlierDecisionReason | None = None
 
 
 def _sha256_file(path: Path) -> str:
@@ -774,6 +827,223 @@ def representative_comments(
         msg = "not every representative index was found in the corpus"
         raise ValueError(msg)
     return sorted(comments, key=lambda item: (item.topic_id, item.rank))
+
+
+def _load_outlier_decisions(
+    artifacts: AnalysisArtifacts,
+    original_labels: NDArray[np.int64],
+) -> tuple[OutlierDecision, ...]:
+    """Load and validate the optional checksum-bound outlier decision stream."""
+    if artifacts.reassignment is None:
+        return ()
+    path = _verified_path(
+        artifacts.run_dir,
+        artifacts.reassignment.decisions_path,
+        artifacts.reassignment.decisions_sha256,
+    )
+    with path.open(encoding="utf-8") as source:
+        decisions = tuple(OutlierDecision.model_validate_json(line) for line in source if line.strip())
+    indices = [decision.record_index for decision in decisions]
+    if len(indices) != len(set(indices)):
+        msg = "outlier decisions contain duplicate corpus indices"
+        raise ValueError(msg)
+    if len(decisions) != artifacts.reassignment.metrics.original_outliers:
+        msg = "outlier decision count does not match reassignment metrics"
+        raise ValueError(msg)
+    for decision in decisions:
+        if decision.record_index >= len(original_labels) or int(original_labels[decision.record_index]) != -1:
+            msg = f"outlier decision {decision.record_index} does not refer to an original outlier"
+            raise ValueError(msg)
+        expected_label = decision.best_topic if decision.reassigned else -1
+        if decision.final_label != expected_label:
+            msg = f"outlier decision {decision.record_index} has an inconsistent final label"
+            raise ValueError(msg)
+    return decisions
+
+
+def _original_review_candidates(
+    labels: NDArray[np.int64],
+    probabilities: NDArray[np.float32],
+    topics: dict[int, str],
+    topic_id: int | None,
+) -> list[tuple[int, _AssignmentReviewSelection]]:
+    """Build low-probability candidates from original HDBSCAN members."""
+    candidates = []
+    for record_index, raw_label in enumerate(labels):
+        assigned_topic = int(raw_label)
+        if assigned_topic < 0 or (topic_id is not None and assigned_topic != topic_id):
+            continue
+        candidates.append(
+            (
+                record_index,
+                _AssignmentReviewSelection(
+                    review_kind=AssignmentReviewKind.LOW_HDBSCAN_PROBABILITY,
+                    rank=0,
+                    assigned_topic_id=assigned_topic,
+                    candidate_topic_id=None,
+                    topic_name=topics[assigned_topic],
+                    hdbscan_probability=float(probabilities[record_index]),
+                ),
+            ),
+        )
+    return candidates
+
+
+def _outlier_review_candidates(
+    artifacts: AnalysisArtifacts,
+    labels: NDArray[np.int64],
+    topics: dict[int, str],
+    topic_id: int | None,
+) -> list[tuple[int, _AssignmentReviewSelection]]:
+    """Build accepted and rejected candidates from persisted outlier decisions."""
+    candidates = []
+    for decision in _load_outlier_decisions(artifacts, labels):
+        relevant_topic = decision.final_label if decision.reassigned else decision.best_topic
+        if topic_id is not None and relevant_topic != topic_id:
+            continue
+        candidates.append(
+            (
+                decision.record_index,
+                _AssignmentReviewSelection(
+                    review_kind=(
+                        AssignmentReviewKind.REASSIGNED_OUTLIER
+                        if decision.reassigned
+                        else AssignmentReviewKind.REJECTED_OUTLIER
+                    ),
+                    rank=0,
+                    assigned_topic_id=decision.final_label if decision.reassigned else None,
+                    candidate_topic_id=decision.best_topic,
+                    topic_name=topics.get(relevant_topic) if relevant_topic is not None else None,
+                    best_cosine_similarity=decision.best_similarity,
+                    second_cosine_similarity=decision.second_similarity,
+                    similarity_margin=decision.margin,
+                    decision_reason=decision.reason,
+                ),
+            ),
+        )
+    return candidates
+
+
+def _rank_review_candidates(
+    candidates: list[tuple[int, _AssignmentReviewSelection]],
+    n: int,
+) -> dict[int, _AssignmentReviewSelection]:
+    """Rank candidates independently by review kind and associated topic."""
+    grouped: dict[tuple[AssignmentReviewKind, int | None], list[tuple[int, _AssignmentReviewSelection]]] = {}
+    for record_index, selection in candidates:
+        topic_id = (
+            selection.assigned_topic_id
+            if selection.assigned_topic_id is not None
+            else selection.candidate_topic_id
+        )
+        grouped.setdefault((selection.review_kind, topic_id), []).append((record_index, selection))
+    selected: dict[int, _AssignmentReviewSelection] = {}
+    for (kind, _topic_id), rows in grouped.items():
+        if kind == AssignmentReviewKind.LOW_HDBSCAN_PROBABILITY:
+            rows.sort(key=lambda item: (item[1].hdbscan_probability, item[0]))
+        elif kind == AssignmentReviewKind.REASSIGNED_OUTLIER:
+            rows.sort(key=lambda item: (item[1].similarity_margin, item[1].best_cosine_similarity, item[0]))
+        else:
+            rows.sort(
+                key=lambda item: (
+                    -(item[1].best_cosine_similarity if item[1].best_cosine_similarity is not None else -1),
+                    item[1].similarity_margin if item[1].similarity_margin is not None else 2,
+                    item[0],
+                ),
+            )
+        for rank, (record_index, selection) in enumerate(rows[:n], start=1):
+            selected[record_index] = _AssignmentReviewSelection(
+                **{**selection.__dict__, "rank": rank},
+            )
+    return selected
+
+
+def assignment_review_comments(
+    artifacts: AnalysisArtifacts,
+    n: int = 10,
+    *,
+    topic_id: int | None = None,
+) -> list[AssignmentReviewComment]:
+    """Return existing records whose cluster assignment merits manual review.
+
+    The function selects up to ``n`` records per topic and review kind. Original
+    members are ranked by ascending HDBSCAN membership probability. Accepted
+    outlier reassignments are ranked by the smallest cosine-similarity margin;
+    rejected outliers by the highest similarity to their candidate topic. These
+    measurements remain in separate fields and are never combined into one score.
+    Raw text is returned without author identity and no ML stage is recomputed.
+
+    Args:
+        artifacts: Checksum-verified artifacts for one pipeline run.
+        n: Positive maximum number of rows per topic and review kind.
+        topic_id: Optional assigned or candidate topic ID.
+
+    Returns:
+        Review rows ordered by topic, review kind, and within-group rank.
+
+    Raises:
+        FileNotFoundError: If a required source artifact is missing.
+        KeyError: If ``topic_id`` does not exist.
+        ValueError: If limits, checksums, assignments, or decisions are inconsistent.
+
+    """
+    if type(n) is not int or n < 1:
+        msg = "n must be a positive integer"
+        raise ValueError(msg)
+    topics = {topic.topic_id: topic.name for topic in artifacts.topics}
+    if topic_id is not None and topic_id not in topics:
+        msg = f"unknown topic ID: {topic_id}"
+        raise KeyError(msg)
+    labels, probabilities = _load_original_assignments(artifacts)
+    candidates = _original_review_candidates(labels, probabilities, topics, topic_id)
+    candidates.extend(_outlier_review_candidates(artifacts, labels, topics, topic_id))
+    selections = _rank_review_candidates(candidates, n)
+    comments = []
+    corpus_rows = 0
+    with artifacts.corpus_path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            record_index = corpus_rows
+            corpus_rows += 1
+            selection = selections.get(record_index)
+            if selection is None:
+                continue
+            record = CorpusRecord.model_validate_json(line)
+            comments.append(
+                AssignmentReviewComment(
+                    **selection.__dict__,
+                    record_index=record_index,
+                    text=record.text,
+                    text_kind=record.text_kind.value,
+                    parent_record_id=record.parent_record_id,
+                    published_at=record.published_at,
+                    like_count=record.like_count,
+                    duplicate_count=record.duplicate_count,
+                    video_title=record.video_title,
+                    video_channel=record.video_channel,
+                    video_url=_safe_youtube_url(record),
+                    search_query=record.search_query,
+                ),
+            )
+    if corpus_rows != artifacts.summary.records:
+        msg = f"corpus rows {corpus_rows} do not match assignments {artifacts.summary.records}"
+        raise ValueError(msg)
+    if len(comments) != len(selections):
+        msg = "not every assignment-review index was found in the corpus"
+        raise ValueError(msg)
+    return sorted(
+        comments,
+        key=lambda item: (
+            item.assigned_topic_id
+            if item.assigned_topic_id is not None
+            else item.candidate_topic_id
+            if item.candidate_topic_id is not None
+            else -1,
+            item.review_kind,
+            item.rank,
+        ),
+    )
 
 
 def _lineage_check(name: str, expression: str, passed: bool, details: str) -> DataLineageCheck:

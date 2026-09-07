@@ -13,16 +13,25 @@ from src.ml.clustering import ClusteringManifest, ClusterSummary, HDBSCANConfig
 from src.ml.corpus import CorpusManifest, CorpusStats
 from src.ml.inspection import DatasetInspection
 from src.ml.models import CleaningReason, DeduplicationStats
-from src.ml.outlier_reassignment import FinalClusterSummary, OutlierReassignmentManifest
+from src.ml.outlier_reassignment import (
+    FinalClusterSummary,
+    OutlierDecision,
+    OutlierDecisionReason,
+    OutlierReassignmentManifest,
+    OutlierReassignmentMetrics,
+)
 from src.ml.reporting import (
     AnalysisArtifacts,
     AnalysisSummary,
+    AssignmentReviewComment,
+    AssignmentReviewKind,
     ClusterCard,
     DataScope,
     ReassignmentStatus,
     ReportManifest,
     RepresentativeComment,
     TopicSummaryRow,
+    assignment_review_comments,
     build_cluster_cards,
     build_data_lineage,
     get_cluster_card,
@@ -319,6 +328,90 @@ def _representative_artifacts(tmp_path: Path) -> AnalysisArtifacts:
     )
 
 
+def _review_artifacts(tmp_path: Path) -> AnalysisArtifacts:
+    artifacts = _representative_artifacts(tmp_path)
+    existing = [json.loads(line) for line in artifacts.corpus_path.read_text(encoding="utf-8").splitlines()]
+    for index in (4, 5):
+        existing.append(
+            {
+                **existing[0],
+                "corpus_id": f"corpus:{index:064x}",
+                "cleaned_record_index": index,
+                "record_id": f"record-{index}",
+                "text": f"Private review {index}",
+                "clean_text": f"Private review {index}",
+                "author": f"private-author-{index}",
+            },
+        )
+    artifacts.corpus_path.write_text(
+        "".join(f"{json.dumps(row)}\n" for row in existing),
+        encoding="utf-8",
+    )
+    labels_path = Path(artifacts.clustering.labels_path)
+    probabilities_path = Path(artifacts.clustering.probabilities_path)
+    np.save(labels_path, np.asarray([0, 0, 0, -1, -1, -1], dtype=np.int64), allow_pickle=False)
+    np.save(
+        probabilities_path,
+        np.asarray([0.91, 0.21, 0.73, 0.0, 0.0, 0.0], dtype=np.float32),
+        allow_pickle=False,
+    )
+    clustering = artifacts.clustering.model_copy(
+        update={"labels_sha256": _sha256(labels_path), "probabilities_sha256": _sha256(probabilities_path)},
+    )
+    decisions_path = artifacts.run_dir / "11-reassignment/outlier-decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True, exist_ok=True)
+    decisions = (
+        OutlierDecision(
+            record_index=3,
+            final_label=0,
+            best_topic=0,
+            best_similarity=0.87,
+            second_topic=None,
+            second_similarity=None,
+            margin=0.06,
+            reassigned=True,
+            reason=OutlierDecisionReason.REASSIGNED,
+        ),
+        OutlierDecision(
+            record_index=4,
+            final_label=-1,
+            best_topic=0,
+            best_similarity=0.84,
+            second_topic=None,
+            second_similarity=None,
+            margin=0.04,
+            reassigned=False,
+            reason=OutlierDecisionReason.BELOW_SIMILARITY,
+        ),
+        OutlierDecision(
+            record_index=5,
+            final_label=-1,
+            best_topic=None,
+            best_similarity=None,
+            second_topic=None,
+            second_similarity=None,
+            margin=None,
+            reassigned=False,
+            reason=OutlierDecisionReason.NO_ELIGIBLE_TOPIC,
+        ),
+    )
+    decisions_path.write_text(
+        "".join(f"{decision.model_dump_json()}\n" for decision in decisions),
+        encoding="utf-8",
+    )
+    reassignment = OutlierReassignmentManifest.model_construct(
+        decisions_path=str(decisions_path),
+        decisions_sha256=_sha256(decisions_path),
+        metrics=OutlierReassignmentMetrics.model_construct(original_outliers=3),
+    )
+    return replace(
+        artifacts,
+        clustering=clustering,
+        reassignment=reassignment,
+        summary=artifacts.summary.model_copy(update={"records": 6}),
+    )
+
+
 def test_stratified_plot_indices_are_deterministic_and_keep_every_label() -> None:
     labels = np.repeat(np.asarray([-1, 0, 1, 2], dtype=np.int64), [80, 10, 5, 5])
 
@@ -505,3 +598,59 @@ def test_representative_comments_reject_tampered_indices(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="checksum mismatch"):
         representative_comments(artifacts)
+
+
+def test_assignment_review_keeps_score_types_and_outlier_meanings_separate(tmp_path: Path) -> None:
+    artifacts = _review_artifacts(tmp_path)
+    before = {path: path.stat().st_mtime_ns for path in artifacts.run_dir.rglob("*") if path.is_file()}
+
+    rows = assignment_review_comments(artifacts, n=2, topic_id=0)
+
+    assert [row.review_kind for row in rows] == [
+        AssignmentReviewKind.LOW_HDBSCAN_PROBABILITY,
+        AssignmentReviewKind.LOW_HDBSCAN_PROBABILITY,
+        AssignmentReviewKind.REASSIGNED_OUTLIER,
+        AssignmentReviewKind.REJECTED_OUTLIER,
+    ]
+    assert [row.record_index for row in rows[:2]] == [1, 2]
+    assert rows[0].hdbscan_probability == pytest.approx(0.21)
+    assert rows[0].best_cosine_similarity is None
+    assert rows[2].assigned_topic_id == rows[2].candidate_topic_id == 0
+    assert rows[2].similarity_margin == 0.06
+    assert rows[3].assigned_topic_id is None
+    assert rows[3].candidate_topic_id == 0
+    assert rows[3].decision_reason == OutlierDecisionReason.BELOW_SIMILARITY
+    assert "author" not in AssignmentReviewComment.model_fields
+    assert {path: path.stat().st_mtime_ns for path in artifacts.run_dir.rglob("*") if path.is_file()} == before
+
+
+def test_assignment_review_works_without_reassignment_and_validates_limit(tmp_path: Path) -> None:
+    artifacts = _representative_artifacts(tmp_path)
+
+    rows = assignment_review_comments(artifacts, n=1)
+
+    assert len(rows) == 1
+    assert rows[0].record_index == 2
+    assert rows[0].review_kind == AssignmentReviewKind.LOW_HDBSCAN_PROBABILITY
+    for invalid_n in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="positive integer"):
+            assignment_review_comments(artifacts, n=invalid_n)  # type: ignore[arg-type]
+
+
+def test_assignment_review_includes_rejections_without_an_eligible_candidate(tmp_path: Path) -> None:
+    rows = assignment_review_comments(_review_artifacts(tmp_path), n=2)
+
+    no_candidate = next(row for row in rows if row.record_index == 5)
+    assert no_candidate.review_kind == AssignmentReviewKind.REJECTED_OUTLIER
+    assert no_candidate.assigned_topic_id is None
+    assert no_candidate.candidate_topic_id is None
+    assert no_candidate.topic_name is None
+    assert no_candidate.decision_reason == OutlierDecisionReason.NO_ELIGIBLE_TOPIC
+
+
+def test_assignment_review_rejects_tampered_outlier_decisions(tmp_path: Path) -> None:
+    artifacts = _review_artifacts(tmp_path)
+    Path(artifacts.reassignment.decisions_path).write_text("tampered\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        assignment_review_comments(artifacts)

@@ -59,6 +59,13 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "if not SHOW_PRIVATE_TEXT" in source
     assert "centroid_similarity" in source
     assert "hdbscan_probability" in source
+    assert "REVIEW_EXAMPLES_PER_CLUSTER = 10" in source
+    assert "def show_assignment_review_comments(" in source
+    assert "assignment_review_comments(artifacts, n=n, topic_id=topic_id)" in source
+    assert "low_hdbscan_probability" not in source
+    assert "best_cosine_similarity" in source
+    assert "similarity_margin" in source
+    assert "candidate topic ID" in source
     assert 'hyperlinks="html"' in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source
