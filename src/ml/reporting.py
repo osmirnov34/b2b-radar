@@ -7,6 +7,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ from src.ml.corpus import CorpusManifest
 from src.ml.inspection import DatasetInspection
 from src.ml.outlier_reassignment import OutlierReassignmentManifest
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
+from src.ml.splitting import DatasetSplitManifest, SplitName
 from src.ml.topic_representation import TopicRepresentation, TopicRepresentationManifest
 
 if TYPE_CHECKING:
@@ -57,6 +59,76 @@ class ProcessingFlowStep(_ReportModel):
     stage: str
     records: int = Field(ge=0)
     note: str = ""
+
+
+class DataScope(StrEnum):
+    ALL = "all"
+    DEVELOPMENT = "development"
+    VALIDATION = "validation"
+    TEST = "test"
+
+
+class DataEntity(StrEnum):
+    PARENT_COMMENT = "parent_comment"
+    REPLY = "reply"
+    TEXT_UNIT = "text_unit"
+    CLUSTER_ASSIGNMENT = "cluster_assignment"
+
+
+class DataSourceReference(_ReportModel):
+    """Identify the persisted manifest field from which a metric originates."""
+
+    path: str
+    field: str
+
+
+class DataLineageMetric(_ReportModel):
+    """Describe one aggregate count together with its scope, entity, and source."""
+
+    key: str
+    label: str
+    records: int = Field(ge=0)
+    scope: DataScope
+    entity: DataEntity
+    source: DataSourceReference
+    description: str
+
+
+class DataLineageCheck(_ReportModel):
+    """Record one successfully validated relationship between pipeline stages."""
+
+    name: str
+    expression: str
+    passed: bool
+    details: str
+
+
+class DataLineage(_ReportModel):
+    """Contain scope-aware flow metrics and their validated provenance checks."""
+
+    metrics: list[DataLineageMetric]
+    checks: list[DataLineageCheck]
+    cleaning_removed_by_reason: dict[str, int]
+    semantic_duplicates_removed: int = Field(ge=0)
+
+    def metric(self, key: str) -> DataLineageMetric:
+        """Return a metric by its stable key.
+
+        Args:
+            key: Machine-readable metric identifier from ``build_data_lineage``.
+
+        Returns:
+            The matching scope-aware metric.
+
+        Raises:
+            KeyError: If the lineage does not contain the requested metric.
+
+        """
+        try:
+            return next(metric for metric in self.metrics if metric.key == key)
+        except StopIteration as exc:
+            msg = f"unknown data-lineage metric: {key}"
+            raise KeyError(msg) from exc
 
 
 class ReportManifest(_ReportModel):
@@ -220,29 +292,290 @@ def topic_summary_rows(artifacts: AnalysisArtifacts) -> list[TopicSummaryRow]:
     ]
 
 
-def processing_flow(artifacts: AnalysisArtifacts) -> list[ProcessingFlowStep]:
-    """Build aggregate record-flow steps from persisted stage manifests."""
-    inspection = DatasetInspection.model_validate_json(
-        (artifacts.run_dir / "01-inspection/dataset-profile.json").read_text(encoding="utf-8"),
-    )
-    cleaning = DatasetCleaningManifest.model_validate_json(
-        (artifacts.run_dir / "04-cleaning/cleaning-manifest.json").read_text(encoding="utf-8"),
-    )
+def _lineage_check(name: str, expression: str, passed: bool, details: str) -> DataLineageCheck:
+    """Create a passed check and fail immediately when its invariant is false."""
+    if not passed:
+        msg = f"data-lineage invariant failed: {name}: {details}"
+        raise ValueError(msg)
+    return DataLineageCheck(name=name, expression=expression, passed=True, details=details)
+
+
+def build_data_lineage(artifacts: AnalysisArtifacts) -> DataLineage:
+    """Build and validate an auditable, scope-aware record flow for one run.
+
+    Args:
+        artifacts: Checksum-verified aggregate artifacts loaded for one pipeline run.
+
+    Returns:
+        Metrics with explicit dataset scopes and source fields, removal counts, and
+        the successfully evaluated cross-stage invariants.
+
+    Raises:
+        FileNotFoundError: If a required stage manifest or referenced artifact is missing.
+        ValueError: If checksums, row counts, flattening, or stage relationships disagree.
+
+    """
+    import numpy as np
+
+    inspection_path = artifacts.run_dir / "01-inspection/dataset-profile.json"
+    split_path = artifacts.run_dir / "02-split/split-manifest.json"
+    cleaning_path = artifacts.run_dir / "04-cleaning/cleaning-manifest.json"
+    deduplication_path = artifacts.run_dir / "06-deduplication/semantic-deduplication-manifest.json"
+    inspection = DatasetInspection.model_validate_json(inspection_path.read_text(encoding="utf-8"))
+    split = DatasetSplitManifest.model_validate_json(split_path.read_text(encoding="utf-8"))
+    cleaning = DatasetCleaningManifest.model_validate_json(cleaning_path.read_text(encoding="utf-8"))
     deduplication = SemanticDeduplicationManifest.model_validate_json(
-        (artifacts.run_dir / "06-deduplication/semantic-deduplication-manifest.json").read_text(encoding="utf-8"),
+        deduplication_path.read_text(encoding="utf-8"),
     )
-    return [
-        ProcessingFlowStep(stage="valid parent comments", records=inspection.contract_valid),
-        ProcessingFlowStep(
-            stage="flattened text units",
-            records=cleaning.stats.input_text_units,
-            note="includes nested replies",
+
+    _verified_path(artifacts.run_dir, cleaning.source_path, split.output_sha256[SplitName.DEVELOPMENT])
+    _verified_path(artifacts.run_dir, cleaning.output_path, cleaning.output_sha256)
+    _verified_path(artifacts.run_dir, deduplication.records_path, cleaning.output_sha256)
+    checks = [
+        _lineage_check(
+            "inspection_to_split",
+            "inspection.contract_valid == split.stats.input_records",
+            inspection.contract_valid == split.stats.input_records,
+            f"{inspection.contract_valid} == {split.stats.input_records}",
         ),
-        ProcessingFlowStep(stage="after cleaning", records=cleaning.stats.output_text_units),
-        ProcessingFlowStep(stage="after semantic deduplication", records=deduplication.result.n_kept),
-        ProcessingFlowStep(stage="final corpus", records=artifacts.corpus.stats.output_records),
-        ProcessingFlowStep(stage="assigned to topics", records=artifacts.summary.records - artifacts.summary.outliers),
-        ProcessingFlowStep(stage="remaining outliers", records=artifacts.summary.outliers),
+        _lineage_check(
+            "inspection_checksum",
+            "inspection.sha256 == split.source_sha256",
+            inspection.sha256 == split.source_sha256,
+            f"inspection={inspection.sha256[:12]}..., split={split.source_sha256[:12]}...",
+        ),
+        _lineage_check(
+            "development_to_cleaning",
+            "split development written == cleaning input rows == cleaning input comments",
+            split.stats.written_records[SplitName.DEVELOPMENT]
+            == cleaning.stats.input_rows
+            == cleaning.stats.input_comments,
+            (
+                f"{split.stats.written_records[SplitName.DEVELOPMENT]} == "
+                f"{cleaning.stats.input_rows} == {cleaning.stats.input_comments}"
+            ),
+        ),
+        _lineage_check(
+            "flattening",
+            "cleaning input comments + replies == input text units",
+            cleaning.stats.input_comments + cleaning.stats.input_replies == cleaning.stats.input_text_units,
+            (
+                f"{cleaning.stats.input_comments} + {cleaning.stats.input_replies} "
+                f"== {cleaning.stats.input_text_units}"
+            ),
+        ),
+        _lineage_check(
+            "cleaning_to_deduplication",
+            "cleaning output text units == semantic deduplication input",
+            cleaning.stats.output_text_units == deduplication.result.n_input,
+            f"{cleaning.stats.output_text_units} == {deduplication.result.n_input}",
+        ),
+        _lineage_check(
+            "deduplication_to_corpus",
+            "semantic deduplication kept == final corpus records",
+            deduplication.result.n_kept == artifacts.corpus.stats.output_records,
+            f"{deduplication.result.n_kept} == {artifacts.corpus.stats.output_records}",
+        ),
+        _lineage_check(
+            "cleaning_manifest_checksum",
+            "corpus cleaning manifest checksum == actual cleaning manifest checksum",
+            artifacts.corpus.cleaning_manifest_sha256 == _sha256_file(cleaning_path),
+            (
+                f"corpus={artifacts.corpus.cleaning_manifest_sha256[:12]}..., "
+                f"actual={_sha256_file(cleaning_path)[:12]}..."
+            ),
+        ),
+        _lineage_check(
+            "deduplication_manifest_checksum",
+            "corpus deduplication manifest checksum == actual deduplication manifest checksum",
+            artifacts.corpus.deduplication_manifest_sha256 == _sha256_file(deduplication_path),
+            (
+                f"corpus={artifacts.corpus.deduplication_manifest_sha256[:12]}..., "
+                f"actual={_sha256_file(deduplication_path)[:12]}..."
+            ),
+        ),
+        _lineage_check(
+            "corpus_to_assignments",
+            "assigned records + outliers == final corpus records",
+            len(artifacts.labels) == artifacts.corpus.stats.output_records,
+            f"{len(artifacts.labels)} == {artifacts.corpus.stats.output_records}",
+        ),
+    ]
+    final_outliers = int(np.count_nonzero(artifacts.labels == -1))
+    final_assigned = len(artifacts.labels) - final_outliers
+    if artifacts.reassignment is not None:
+        reassignment_metrics = artifacts.reassignment.metrics
+        checks.extend(
+            [
+                _lineage_check(
+                    "reassignment_input",
+                    "original outliers == reassigned + remaining outliers",
+                    reassignment_metrics.original_outliers
+                    == reassignment_metrics.reassigned_outliers + reassignment_metrics.remaining_outliers,
+                    (
+                        f"{reassignment_metrics.original_outliers} == "
+                        f"{reassignment_metrics.reassigned_outliers} + {reassignment_metrics.remaining_outliers}"
+                    ),
+                ),
+                _lineage_check(
+                    "reassignment_output",
+                    "manifest remaining outliers == final label outliers",
+                    reassignment_metrics.remaining_outliers == final_outliers,
+                    f"{reassignment_metrics.remaining_outliers} == {final_outliers}",
+                ),
+            ],
+        )
+
+    lineage_metrics = [
+        DataLineageMetric(
+            key="all_valid_parents",
+            label="Valid parent comments",
+            records=inspection.contract_valid,
+            scope=DataScope.ALL,
+            entity=DataEntity.PARENT_COMMENT,
+            source=DataSourceReference(path=str(inspection_path), field="contract_valid"),
+            description="Contract-valid top-level comments in the complete input dataset.",
+        ),
+    ]
+    lineage_metrics.extend(
+        (
+            DataLineageMetric(
+                key=f"{split_name.value}_parents",
+                label=f"{split_name.value.title()} parent comments",
+                records=split.stats.written_records[split_name],
+                scope=DataScope(split_name.value),
+                entity=DataEntity.PARENT_COMMENT,
+                source=DataSourceReference(
+                    path=str(split_path),
+                    field=f"stats.written_records.{split_name.value}",
+                ),
+                description="Top-level comments retained in this leakage-safe split.",
+            )
+            for split_name in SplitName
+        ),
+    )
+    lineage_metrics.extend(
+        [
+            DataLineageMetric(
+                key="development_replies",
+                label="Development nested replies",
+                records=cleaning.stats.input_replies,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.REPLY,
+                source=DataSourceReference(path=str(cleaning_path), field="stats.input_replies"),
+                description="Nested replies attached to development parent comments.",
+            ),
+            DataLineageMetric(
+                key="development_flattened",
+                label="Flattened development text units",
+                records=cleaning.stats.input_text_units,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.TEXT_UNIT,
+                source=DataSourceReference(path=str(cleaning_path), field="stats.input_text_units"),
+                description="Development parent comments and replies before cleaning.",
+            ),
+            DataLineageMetric(
+                key="development_cleaned",
+                label="Cleaned development text units",
+                records=cleaning.stats.output_text_units,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.TEXT_UNIT,
+                source=DataSourceReference(path=str(cleaning_path), field="stats.output_text_units"),
+                description="Development text units retained after deterministic cleaning and exact deduplication.",
+            ),
+            DataLineageMetric(
+                key="development_semantic_deduplicated",
+                label="Semantically deduplicated text units",
+                records=deduplication.result.n_kept,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.TEXT_UNIT,
+                source=DataSourceReference(path=str(deduplication_path), field="result.n_kept"),
+                description="Development text units retained after semantic near-duplicate removal.",
+            ),
+            DataLineageMetric(
+                key="development_final_corpus",
+                label="Final development corpus",
+                records=artifacts.corpus.stats.output_records,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.TEXT_UNIT,
+                source=DataSourceReference(
+                    path=str(artifacts.run_dir / "07-corpus/corpus-manifest.json"),
+                    field="stats.output_records",
+                ),
+                description="Row-aligned corpus consumed by reduction and clustering.",
+            ),
+            DataLineageMetric(
+                key="development_assigned",
+                label="Assigned to topics",
+                records=final_assigned,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.CLUSTER_ASSIGNMENT,
+                source=DataSourceReference(
+                    path=str(
+                        artifacts.run_dir / "11-reassignment/outlier-reassignment-manifest.json"
+                        if artifacts.reassignment is not None
+                        else artifacts.run_dir / "09-clustering/clustering-manifest.json"
+                    ),
+                    field="final_labels != -1",
+                ),
+                description="Final corpus rows assigned to a topic after optional reassignment.",
+            ),
+            DataLineageMetric(
+                key="development_outliers",
+                label="Remaining outliers",
+                records=final_outliers,
+                scope=DataScope.DEVELOPMENT,
+                entity=DataEntity.CLUSTER_ASSIGNMENT,
+                source=DataSourceReference(
+                    path=str(
+                        artifacts.run_dir / "11-reassignment/outlier-reassignment-manifest.json"
+                        if artifacts.reassignment is not None
+                        else artifacts.run_dir / "09-clustering/clustering-manifest.json"
+                    ),
+                    field="final_labels == -1",
+                ),
+                description="Final corpus rows that remain outside every topic.",
+            ),
+        ],
+    )
+    return DataLineage(
+        metrics=lineage_metrics,
+        checks=checks,
+        cleaning_removed_by_reason={reason.value: count for reason, count in cleaning.stats.removed_by_reason.items()},
+        semantic_duplicates_removed=deduplication.result.n_removed,
+    )
+
+
+def processing_flow(artifacts: AnalysisArtifacts) -> list[ProcessingFlowStep]:
+    """Return a linear development-only view retained for API compatibility.
+
+    Args:
+        artifacts: Checksum-verified aggregate artifacts for one pipeline run.
+
+    Returns:
+        Development parent, flattened, cleaned, deduplicated, and corpus counts.
+
+    Raises:
+        FileNotFoundError: If lineage inputs are incomplete.
+        ValueError: If ``build_data_lineage`` detects inconsistent artifacts.
+
+    """
+    lineage = build_data_lineage(artifacts)
+    return [
+        ProcessingFlowStep(
+            stage=metric.label,
+            records=metric.records,
+            note=f"scope={metric.scope.value}; source={Path(metric.source.path).name}:{metric.source.field}",
+        )
+        for metric in lineage.metrics
+        if metric.key
+        in {
+            "development_parents",
+            "development_flattened",
+            "development_cleaned",
+            "development_semantic_deduplicated",
+            "development_final_corpus",
+        }
     ]
 
 

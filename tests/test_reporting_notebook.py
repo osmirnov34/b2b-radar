@@ -42,7 +42,11 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "stratified_plot_indices" in source
     assert "Outlier share" in source
     assert "Assignment confidence" in source
-    assert "processing_flow(artifacts)" in source
+    assert "build_data_lineage(artifacts)" in source
+    assert "Leakage-safe parent-comment splits" in source
+    assert "Development text flow" in source
+    assert "source_field" in source
+    assert "Text unit:" in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source
     assert "Language composition by topic" in source
