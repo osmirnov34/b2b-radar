@@ -88,3 +88,21 @@ python scripts/run_clustering_grid.py \
 
 Do not choose the production value from outlier share alone. Topic coherence, stability, source concentration, and
 manual validation are separate decision criteria covered by later interpretability stages.
+
+### Cross-variant cluster matching
+
+After the grid completes, the same notebook matches every adjacent pair (`50→100`, `100→150`, `150→250`) by
+intersecting their aligned corpus row indices. Numeric cluster IDs are local to a variant and are never compared as
+identities. An overlap is material only when it meets both `minimum_shared_records` and
+`minimum_overlap_share` for the source and target cluster; the notebook defaults to 5%.
+
+For each material edge, `cluster-transitions.jsonl` records intersection size, Jaccard similarity, source retention,
+target composition, split/merge status, and whether it is a primary link. A primary link requires a deterministic
+mutual-best overlap: both clusters must select each other, with ID used only to resolve an exact tie. This keeps the
+relationship one-to-one without adding a SciPy runtime dependency. Other material edges remain visible because they
+are the evidence for splits and merges. Clusters without a material edge are recorded as `new` or `disappeared`,
+which means “no material match under this threshold,” not necessarily that every record is novel or lost.
+
+`cluster-matching-manifest.json` binds the transition file to the grid-manifest checksum and matching thresholds.
+Existing output is checksum-validated and reused; partial or changed output blocks instead of being overwritten.
+The notebook presents the complete transition table and a Sankey diagram, with mutual-best links highlighted.

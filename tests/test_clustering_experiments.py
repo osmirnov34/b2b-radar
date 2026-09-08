@@ -7,6 +7,9 @@ from src.ml.clustering import HDBSCANConfig
 from src.ml.clustering_experiments import (
     ClusteringGridConfig,
     ClusteringGridManifest,
+    ClusterMatchingConfig,
+    ClusterTransitionStatus,
+    match_grid_clusters,
     run_clustering_grid,
 )
 from tests.test_clustering import FakeClusterer, _build_inputs
@@ -25,6 +28,13 @@ class GridFactory:
         if config.min_cluster_size == 2:
             return FakeClusterer([0, 0, 0, -1, 1, 1, -1, -1], [0.9, 0.8, 0.7, 0.0, 0.8, 0.7, 0.0, 0.0])
         return FakeClusterer([0, 0, 0, 0, -1, -1, -1, -1], [0.9, 0.8, 0.7, 0.6, 0.0, 0.0, 0.0, 0.0])
+
+
+class SplitMergeFactory:
+    def __call__(self, config: HDBSCANConfig) -> FakeClusterer:
+        if config.min_cluster_size == 2:
+            return FakeClusterer([0, 0, 0, 0, 1, 1, 1, 1], [0.8] * 8)
+        return FakeClusterer([0, 0, 1, 1, 0, 0, 1, 1], [0.8] * 8)
 
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -145,3 +155,74 @@ def test_clustering_grid_rejects_invalid_grid_and_source_run_output(tmp_path: Pa
             config=ClusteringGridConfig(min_cluster_sizes=(2,)),
             clusterer_factory=GridFactory(),
         )
+
+
+def test_grid_cluster_matching_detects_split_merge_and_primary_pairs(tmp_path: Path) -> None:
+    reduced, reduction_manifest, corpus_manifest = _inputs(tmp_path)
+    output = tmp_path / "experiments" / "grid"
+    run_clustering_grid(
+        reduced,
+        reduction_manifest,
+        corpus_manifest,
+        output,
+        config=ClusteringGridConfig(min_cluster_sizes=(2, 3)),
+        clusterer_factory=SplitMergeFactory(),
+    )
+
+    manifest, transitions = match_grid_clusters(output / "clustering-grid-manifest.json")
+
+    assert manifest.compared_pairs == [(2, 3)]
+    assert manifest.records == 8
+    assert len(transitions) == 4
+    assert all(item.status == ClusterTransitionStatus.SPLIT_AND_MERGED for item in transitions)
+    assert all(item.jaccard == 1 / 3 for item in transitions)
+    assert all(item.source_retention == item.target_composition == 0.5 for item in transitions)
+    assert sum(item.primary_match for item in transitions) == 1
+
+
+def test_grid_cluster_matching_marks_disappeared_clusters_and_resumes(tmp_path: Path) -> None:
+    reduced, reduction_manifest, corpus_manifest = _inputs(tmp_path)
+    output = tmp_path / "experiments" / "grid"
+    run_clustering_grid(
+        reduced,
+        reduction_manifest,
+        corpus_manifest,
+        output,
+        config=ClusteringGridConfig(min_cluster_sizes=(2, 3)),
+        clusterer_factory=GridFactory(),
+    )
+
+    first_manifest, first = match_grid_clusters(output / "clustering-grid-manifest.json")
+    resumed_manifest, resumed = match_grid_clusters(output / "clustering-grid-manifest.json")
+
+    assert resumed_manifest == first_manifest
+    assert resumed == first
+    disappeared = [item for item in first if item.status == ClusterTransitionStatus.DISAPPEARED]
+    assert len(disappeared) == 1
+    assert disappeared[0].source_cluster_id == 1
+    assert disappeared[0].target_cluster_id is None
+
+
+def test_grid_cluster_matching_threshold_and_checkpoint_integrity(tmp_path: Path) -> None:
+    reduced, reduction_manifest, corpus_manifest = _inputs(tmp_path)
+    output = tmp_path / "experiments" / "grid"
+    run_clustering_grid(
+        reduced,
+        reduction_manifest,
+        corpus_manifest,
+        output,
+        config=ClusteringGridConfig(min_cluster_sizes=(2, 3)),
+        clusterer_factory=SplitMergeFactory(),
+    )
+    grid_path = output / "clustering-grid-manifest.json"
+    _, transitions = match_grid_clusters(
+        grid_path,
+        config=ClusterMatchingConfig(minimum_overlap_share=0.6),
+    )
+    assert {item.status for item in transitions} == {
+        ClusterTransitionStatus.DISAPPEARED,
+        ClusterTransitionStatus.NEW,
+    }
+    (output / "cluster-transitions.jsonl").write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="incompatible or damaged"):
+        match_grid_clusters(grid_path, config=ClusterMatchingConfig(minimum_overlap_share=0.6))

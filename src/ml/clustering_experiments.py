@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +18,10 @@ from src.ml.clustering import (
     HDBSCANConfig,
     cluster_corpus,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 _MINIMUM_CLUSTER_SIZE = 2
 ProgressCallback = Callable[[str], None]
@@ -76,6 +82,57 @@ class ClusteringGridManifest(_ExperimentModel):
             msg = "grid results do not match the configured min_cluster_sizes"
             raise ValueError(msg)
         return self
+
+
+class ClusterTransitionStatus(StrEnum):
+    """Describe a material cluster transition between adjacent grid variants."""
+
+    MATCHED = "matched"
+    SPLIT = "split"
+    MERGED = "merged"
+    SPLIT_AND_MERGED = "split_and_merged"
+    DISAPPEARED = "disappeared"
+    NEW = "new"
+
+
+class ClusterTransition(_ExperimentModel):
+    """Quantify one material overlap or an unmatched cluster."""
+
+    source_min_cluster_size: int = Field(ge=2)
+    target_min_cluster_size: int = Field(ge=2)
+    source_cluster_id: int | None = Field(default=None, ge=0)
+    target_cluster_id: int | None = Field(default=None, ge=0)
+    source_records: int = Field(ge=0)
+    target_records: int = Field(ge=0)
+    overlap_records: int = Field(ge=0)
+    jaccard: float = Field(ge=0, le=1)
+    source_retention: float = Field(ge=0, le=1)
+    target_composition: float = Field(ge=0, le=1)
+    primary_match: bool
+    status: ClusterTransitionStatus
+
+
+class ClusterMatchingConfig(_ExperimentModel):
+    """Control which overlaps are material enough to interpret."""
+
+    schema_version: int = 1
+    minimum_shared_records: int = Field(default=1, ge=1)
+    minimum_overlap_share: float = Field(default=0.05, gt=0, le=1)
+
+
+class ClusterMatchingManifest(_ExperimentModel):
+    """Bind adjacent grid cluster transitions to verified label arrays."""
+
+    schema_version: int = 1
+    grid_manifest_path: str
+    grid_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config: ClusterMatchingConfig
+    records: int = Field(ge=0)
+    compared_pairs: list[tuple[int, int]]
+    transitions_path: str
+    transitions_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transitions: int = Field(ge=0)
+    created_at: datetime
 
 
 def _sha256_file(path: Path) -> str:
@@ -233,3 +290,267 @@ def run_clustering_grid(
     temporary.write_text(f"{grid_manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
     temporary.replace(final_manifest_path)
     return grid_manifest
+
+
+def _load_grid_labels(
+    grid: ClusteringGridManifest,
+    grid_dir: Path,
+) -> dict[int, NDArray[np.int64]]:
+    """Load aligned labels after validating the grid and every variant checksum."""
+    import numpy as np
+
+    for raw_path, expected, label in (
+        (grid.reduction_manifest_path, grid.reduction_manifest_sha256, "reduction manifest"),
+        (grid.reduced_path, grid.reduced_sha256, "reduced matrix"),
+        (grid.corpus_manifest_path, grid.corpus_manifest_sha256, "corpus manifest"),
+    ):
+        path = Path(raw_path)
+        if not path.is_file() or _sha256_file(path) != expected:
+            msg = f"grid source {label} is missing or has a checksum mismatch"
+            raise ValueError(msg)
+    labels_by_size = {}
+    expected_records = None
+    for result in grid.results:
+        manifest_path = Path(result.manifest_path).resolve()
+        if not manifest_path.is_relative_to(grid_dir.resolve()):
+            msg = "grid variant manifest escapes the grid directory"
+            raise ValueError(msg)
+        if not manifest_path.is_file() or _sha256_file(manifest_path) != result.manifest_sha256:
+            msg = f"variant manifest checksum mismatch for min_cluster_size={result.min_cluster_size}"
+            raise ValueError(msg)
+        manifest = ClusteringManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+        variant_dir = manifest_path.parent
+        _validate_variant_artifacts(manifest, variant_dir)
+        if (
+            manifest.reduction_manifest_sha256 != grid.reduction_manifest_sha256
+            or manifest.reduced_sha256 != grid.reduced_sha256
+            or manifest.corpus_manifest_sha256 != grid.corpus_manifest_sha256
+        ):
+            msg = "variant manifest is not aligned with the grid sources"
+            raise ValueError(msg)
+        if manifest.config.min_cluster_size != result.min_cluster_size:
+            msg = "variant manifest min_cluster_size disagrees with the grid"
+            raise ValueError(msg)
+        labels_path = Path(manifest.labels_path)
+        labels = np.load(labels_path, mmap_mode="r", allow_pickle=False)
+        if labels.shape != (manifest.output_records,) or labels.dtype.kind not in "iu":
+            msg = f"invalid labels for min_cluster_size={result.min_cluster_size}"
+            raise ValueError(msg)
+        if manifest.output_records != manifest.input_records:
+            msg = "cluster matching does not accept limited grid variants"
+            raise ValueError(msg)
+        if expected_records is None:
+            expected_records = manifest.output_records
+        elif manifest.output_records != expected_records:
+            msg = "grid label arrays are not row-aligned"
+            raise ValueError(msg)
+        labels_by_size[result.min_cluster_size] = labels
+    return labels_by_size
+
+
+def _transition_status(source_degree: int, target_degree: int) -> ClusterTransitionStatus:
+    if source_degree > 1 and target_degree > 1:
+        return ClusterTransitionStatus.SPLIT_AND_MERGED
+    if source_degree > 1:
+        return ClusterTransitionStatus.SPLIT
+    if target_degree > 1:
+        return ClusterTransitionStatus.MERGED
+    return ClusterTransitionStatus.MATCHED
+
+
+def _match_label_pair(
+    source: NDArray[np.int64],
+    target: NDArray[np.int64],
+    source_size: int,
+    target_size: int,
+    config: ClusterMatchingConfig,
+) -> list[ClusterTransition]:
+    """Match two aligned label arrays using material overlap and mutual primaries."""
+    import numpy as np
+
+    source_ids = sorted(int(value) for value in np.unique(source) if value >= 0)
+    target_ids = sorted(int(value) for value in np.unique(target) if value >= 0)
+    source_counts = {cluster_id: int(np.count_nonzero(source == cluster_id)) for cluster_id in source_ids}
+    target_counts = {cluster_id: int(np.count_nonzero(target == cluster_id)) for cluster_id in target_ids}
+    overlaps = np.zeros((len(source_ids), len(target_ids)), dtype=np.int64)
+    source_positions = {cluster_id: index for index, cluster_id in enumerate(source_ids)}
+    target_positions = {cluster_id: index for index, cluster_id in enumerate(target_ids)}
+    clustered = (source >= 0) & (target >= 0)
+    if np.any(clustered):
+        pairs, counts = np.unique(
+            np.column_stack((source[clustered], target[clustered])),
+            axis=0,
+            return_counts=True,
+        )
+        for (source_id, target_id), count in zip(pairs, counts, strict=True):
+            overlaps[source_positions[int(source_id)], target_positions[int(target_id)]] = int(count)
+    material = np.zeros_like(overlaps, dtype=bool)
+    for left, source_id in enumerate(source_ids):
+        for right, target_id in enumerate(target_ids):
+            overlap = int(overlaps[left, right])
+            material[left, right] = (
+                overlap >= config.minimum_shared_records
+                and overlap / source_counts[source_id] >= config.minimum_overlap_share
+                and overlap / target_counts[target_id] >= config.minimum_overlap_share
+            )
+    primary_pairs: set[tuple[int, int]] = set()
+    if source_ids and target_ids:
+        source_choices = {
+            left: min(
+                (right for right in range(len(target_ids)) if material[left, right]),
+                key=lambda right: (-int(overlaps[left, right]), target_ids[right]),
+            )
+            for left in range(len(source_ids))
+            if material[left].any()
+        }
+        target_choices = {
+            right: min(
+                (left for left in range(len(source_ids)) if material[left, right]),
+                key=lambda left: (-int(overlaps[left, right]), source_ids[left]),
+            )
+            for right in range(len(target_ids))
+            if material[:, right].any()
+        }
+        primary_pairs = {
+            (left, right)
+            for left, right in source_choices.items()
+            if target_choices.get(right) == left
+        }
+    source_degrees = material.sum(axis=1)
+    target_degrees = material.sum(axis=0)
+    transitions = []
+    for left, source_id in enumerate(source_ids):
+        for right, target_id in enumerate(target_ids):
+            if not material[left, right]:
+                continue
+            overlap = int(overlaps[left, right])
+            union = source_counts[source_id] + target_counts[target_id] - overlap
+            transitions.append(
+                ClusterTransition(
+                    source_min_cluster_size=source_size,
+                    target_min_cluster_size=target_size,
+                    source_cluster_id=source_id,
+                    target_cluster_id=target_id,
+                    source_records=source_counts[source_id],
+                    target_records=target_counts[target_id],
+                    overlap_records=overlap,
+                    jaccard=overlap / union,
+                    source_retention=overlap / source_counts[source_id],
+                    target_composition=overlap / target_counts[target_id],
+                    primary_match=(left, right) in primary_pairs,
+                    status=_transition_status(int(source_degrees[left]), int(target_degrees[right])),
+                ),
+            )
+    for left, source_id in enumerate(source_ids):
+        if source_degrees[left] == 0:
+            transitions.append(
+                ClusterTransition(
+                    source_min_cluster_size=source_size,
+                    target_min_cluster_size=target_size,
+                    source_cluster_id=source_id,
+                    target_cluster_id=None,
+                    source_records=source_counts[source_id],
+                    target_records=0,
+                    overlap_records=0,
+                    jaccard=0,
+                    source_retention=0,
+                    target_composition=0,
+                    primary_match=False,
+                    status=ClusterTransitionStatus.DISAPPEARED,
+                ),
+            )
+    for right, target_id in enumerate(target_ids):
+        if target_degrees[right] == 0:
+            transitions.append(
+                ClusterTransition(
+                    source_min_cluster_size=source_size,
+                    target_min_cluster_size=target_size,
+                    source_cluster_id=None,
+                    target_cluster_id=target_id,
+                    source_records=0,
+                    target_records=target_counts[target_id],
+                    overlap_records=0,
+                    jaccard=0,
+                    source_retention=0,
+                    target_composition=0,
+                    primary_match=False,
+                    status=ClusterTransitionStatus.NEW,
+                ),
+            )
+    return sorted(
+        transitions,
+        key=lambda item: (
+            item.source_cluster_id if item.source_cluster_id is not None else -1,
+            item.target_cluster_id if item.target_cluster_id is not None else -1,
+        ),
+    )
+
+
+def match_grid_clusters(
+    grid_manifest_path: Path,
+    *,
+    config: ClusterMatchingConfig | None = None,
+) -> tuple[ClusterMatchingManifest, tuple[ClusterTransition, ...]]:
+    """Match clusters across adjacent, row-aligned grid variants and checkpoint the result."""
+    active_config = config or ClusterMatchingConfig()
+    grid_dir = grid_manifest_path.resolve().parent
+    if not grid_manifest_path.is_file():
+        msg = f"clustering-grid manifest is missing: {grid_manifest_path}"
+        raise FileNotFoundError(msg)
+    grid = ClusteringGridManifest.model_validate_json(grid_manifest_path.read_text(encoding="utf-8"))
+    labels_by_size = _load_grid_labels(grid, grid_dir)
+    pairs = list(zip(grid.config.min_cluster_sizes, grid.config.min_cluster_sizes[1:], strict=False))
+    transitions = tuple(
+        transition
+        for source_size, target_size in pairs
+        for transition in _match_label_pair(
+            labels_by_size[source_size],
+            labels_by_size[target_size],
+            source_size,
+            target_size,
+            active_config,
+        )
+    )
+    transitions_path = grid_dir / "cluster-transitions.jsonl"
+    manifest_path = grid_dir / "cluster-matching-manifest.json"
+    if transitions_path.exists() != manifest_path.exists():
+        msg = "incomplete cluster-matching checkpoint requires manual inspection"
+        raise FileExistsError(msg)
+    if manifest_path.exists():
+        existing = ClusterMatchingManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+        if (
+            existing.grid_manifest_sha256 != _sha256_file(grid_manifest_path)
+            or existing.config != active_config
+            or _sha256_file(transitions_path) != existing.transitions_sha256
+        ):
+            msg = "existing cluster-matching checkpoint is incompatible or damaged"
+            raise ValueError(msg)
+        persisted = tuple(
+            ClusterTransition.model_validate_json(line)
+            for line in transitions_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if persisted != transitions:
+            msg = "persisted cluster transitions disagree with verified grid labels"
+            raise ValueError(msg)
+        return existing, persisted
+    transitions_tmp = transitions_path.with_name(f".{transitions_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with transitions_tmp.open("w", encoding="utf-8") as target_file:
+        for transition in transitions:
+            target_file.write(f"{transition.model_dump_json()}\n")
+    transitions_tmp.replace(transitions_path)
+    manifest = ClusterMatchingManifest(
+        grid_manifest_path=str(grid_manifest_path),
+        grid_manifest_sha256=_sha256_file(grid_manifest_path),
+        config=active_config,
+        records=len(next(iter(labels_by_size.values()), ())),
+        compared_pairs=pairs,
+        transitions_path=str(transitions_path),
+        transitions_sha256=_sha256_file(transitions_path),
+        transitions=len(transitions),
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest, transitions

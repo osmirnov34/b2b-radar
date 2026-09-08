@@ -35,6 +35,12 @@ def test_clustering_grid_notebook_is_guarded_resumable_and_source_safe() -> None
     assert "force=True" not in source
     assert "run_pipeline(" not in source
     assert "restart_from" not in source
+    assert "MATCH_MINIMUM_OVERLAP_SHARE = 0.05" in source
+    assert "match_grid_clusters(" in source
+    assert "primary_match" in source
+    assert "go.Sankey(" in source
+    assert "source_retention" in source
+    assert "target_composition" in source
 
 
 def test_clustering_grid_notebook_compares_core_metrics() -> None:
