@@ -30,10 +30,13 @@ from src.ml.reporting import (
     AssignmentReviewKind,
     ClusterCard,
     DataScope,
+    ProblemAssessmentStatus,
+    ProblemSignalConfig,
     ReassignmentStatus,
     ReportManifest,
     RepresentativeComment,
     TopicSummaryRow,
+    assess_topic_problem_signals,
     assignment_review_comments,
     build_cluster_cards,
     build_data_lineage,
@@ -44,6 +47,7 @@ from src.ml.reporting import (
     stratified_plot_indices,
     topic_summary_rows,
     write_analysis_tables,
+    write_problem_signal_report,
 )
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName, SplitStats
@@ -419,6 +423,27 @@ def _review_artifacts(tmp_path: Path) -> AnalysisArtifacts:
     )
 
 
+def _problem_artifacts(tmp_path: Path, texts: list[str] | None = None) -> AnalysisArtifacts:
+    artifacts = _representative_artifacts(tmp_path)
+    rows = [json.loads(line) for line in artifacts.corpus_path.read_text(encoding="utf-8").splitlines()]
+    active_texts = texts or [
+        "Есть проблема с доставкой",
+        "Нет проблем, но есть задержка заказа",
+        "Прекрасное видео",
+        "Выброс с ошибкой",
+    ]
+    for index, (row, text) in enumerate(zip(rows, active_texts, strict=True)):
+        row["text"] = text
+        row["clean_text"] = text
+        row["video_id"] = "video-a" if index < 2 else "video-b"
+    artifacts.corpus_path.write_text(
+        "".join(f"{json.dumps(row, ensure_ascii=False)}\n" for row in rows),
+        encoding="utf-8",
+    )
+    corpus = CorpusManifest.model_construct(corpus_sha256=_sha256(artifacts.corpus_path))
+    return replace(artifacts, corpus=corpus)
+
+
 def test_stratified_plot_indices_are_deterministic_and_keep_every_label() -> None:
     labels = np.repeat(np.asarray([-1, 0, 1, 2], dtype=np.int64), [80, 10, 5, 5])
 
@@ -719,3 +744,85 @@ def test_explain_assignment_validates_indices_limits_and_final_alignment(tmp_pat
     inconsistent = replace(artifacts, labels=np.asarray([0, 0, 0, -1, -1, -1], dtype=np.int64))
     with pytest.raises(ValueError, match="disagrees with the final labels"):
         explain_assignment(inconsistent, 3)
+
+
+def test_problem_signal_assessment_is_aggregate_multilingual_triage(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    config = ProblemSignalConfig(
+        minimum_signal_records=2,
+        problem_candidate_minimum_share=0.5,
+        topic_only_maximum_share=0.1,
+    )
+
+    assessment = assess_topic_problem_signals(artifacts, config=config)[0]
+
+    assert assessment.status == ProblemAssessmentStatus.PROBLEM_CANDIDATE
+    assert assessment.records == 3
+    assert assessment.signal_records == 2
+    assert assessment.signal_share == 2 / 3
+    assert assessment.signal_comments == 1
+    assert assessment.signal_replies == 1
+    assert assessment.unique_videos == 2
+    assert assessment.signal_videos == 1
+    assert assessment.signal_video_share == 0.5
+    assert assessment.signals == {"задерж": 1, "проблем": 1}
+    assert assessment.requires_manual_review is True
+    assert "Private" not in assessment.model_dump_json()
+
+
+def test_problem_signal_negations_and_thresholds_avoid_false_certainty(tmp_path: Path) -> None:
+    negated = _problem_artifacts(
+        tmp_path / "negated",
+        ["Нет проблем", "Всё без проблем", "Обычная тема", "problem outlier"],
+    )
+    uncertain = _problem_artifacts(
+        tmp_path / "uncertain",
+        ["Ошибка оплаты", "Обычная тема", "Обычная тема", "problem outlier"],
+    )
+    config = ProblemSignalConfig(
+        minimum_signal_records=2,
+        problem_candidate_minimum_share=0.5,
+        topic_only_maximum_share=0.1,
+    )
+
+    topic_only = assess_topic_problem_signals(negated, config=config)[0]
+    uncertain_result = assess_topic_problem_signals(uncertain, config=config)[0]
+
+    assert topic_only.status == ProblemAssessmentStatus.TOPIC_ONLY
+    assert topic_only.signal_records == 0
+    assert topic_only.requires_manual_review is False
+    assert uncertain_result.status == ProblemAssessmentStatus.UNCERTAIN
+    assert uncertain_result.signal_records == 1
+    assert uncertain_result.requires_manual_review is True
+
+
+def test_problem_signal_report_is_checksum_bound_aggregate_and_outside_run(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    output = tmp_path / "visualizations" / artifacts.run_id
+    config = ProblemSignalConfig(minimum_signal_records=1)
+
+    manifest = write_problem_signal_report(artifacts, output, config=config)
+
+    report_text = (output / "problem-signals.jsonl").read_text(encoding="utf-8")
+    assert manifest.topics == 1
+    assert manifest.private_text_included is False
+    assert manifest.corpus_sha256 == artifacts.corpus.corpus_sha256
+    assert manifest.statuses[ProblemAssessmentStatus.PROBLEM_CANDIDATE] == 1
+    assert "Есть проблема" not in report_text
+    assert "private-author" not in report_text
+    with pytest.raises(FileExistsError, match="already exists"):
+        write_problem_signal_report(artifacts, output, config=config)
+    with pytest.raises(ValueError, match="outside"):
+        write_problem_signal_report(artifacts, artifacts.run_dir / "report", config=config)
+
+
+def test_problem_signal_assessment_rejects_tampered_corpus_and_invalid_policy(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    artifacts.corpus_path.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="checksum"):
+        assess_topic_problem_signals(artifacts)
+    with pytest.raises(ValueError, match="must exceed"):
+        ProblemSignalConfig(
+            problem_candidate_minimum_share=0.1,
+            topic_only_maximum_share=0.1,
+        )

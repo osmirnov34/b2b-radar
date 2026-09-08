@@ -101,6 +101,32 @@ The API validates the original assignment checksums, decision checksum and align
 row count, topic ID, and representative artifacts. It does not calculate new embeddings, distances, labels, or
 probabilities. Source text remains behind the notebook privacy opt-in, and author identity is omitted.
 
+## Topic versus problem triage
+
+The notebook evaluates each final topic with `assess_topic_problem_signals()`. This is a transparent lexical triage
+layer, not another clustering model and not a claim that a customer problem has been verified. It counts configured
+Russian and English problem markers in the retained final-corpus rows and assigns one review status:
+
+- `problem_candidate`: enough retained rows and a sufficiently large share contain a marker;
+- `topic_only`: the marker share is at or below the configured low threshold;
+- `uncertain`: everything between those thresholds, including sparse evidence.
+
+The default notebook thresholds are controlled by `PROBLEM_SIGNAL_MINIMUM_RECORDS`,
+`PROBLEM_CANDIDATE_MINIMUM_SHARE`, and `TOPIC_ONLY_MAXIMUM_SHARE`. Common negations such as “нет проблем” and
+“no problem” are removed before marker matching. A retained comment contributes at most once to `signal_records`,
+even when it contains several markers; its `duplicate_count` is not expanded. Final outliers are excluded because
+they have no topic assignment.
+
+The table and scatter plot keep topic size, signal-row share, comment/reply counts, video coverage, and the most
+frequent matched markers visible. Both `problem_candidate` and `uncertain` enter the manual-review queue. The signal
+rate is deliberately separate from HDBSCAN membership probability, cosine reassignment similarity, grid stability,
+and business priority: none of those measurements proves that a topic describes a problem.
+
+With `SAVE_REPORT=True`, `problem-signals.jsonl` and `problem-signals-manifest.json` contain aggregate values only.
+Their manifest binds the result to the pipeline, corpus, and final-label checksums and records the exact marker and
+threshold policy. Raw text and author identity are not written; examples remain available only through the existing
+private-text-gated review functions.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

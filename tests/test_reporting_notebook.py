@@ -70,6 +70,11 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "def show_assignment_explanation(" in source
     assert "result = explain_assignment(" in source
     assert "Representative topic context (not the mathematical cause of assignment)" in source
+    assert "ProblemSignalConfig" in source
+    assert "assess_topic_problem_signals(artifacts, config=problem_signal_config)" in source
+    assert "problem_candidate is a manual-review queue, not a verified problem class" in source
+    assert "write_problem_signal_report(" in source
+    assert "Topic size and transparent problem-signal share" in source
     assert 'hyperlinks="html"' in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source

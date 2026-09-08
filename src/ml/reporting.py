@@ -6,14 +6,14 @@ import csv
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.ml.cleaning_dataset import DatasetCleaningManifest
 from src.ml.clustering import ClusteringManifest, ClusterSummary
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 _MATRIX_DIMENSIONS = 2
 _MINIMUM_PLOT_DIMENSIONS = 2
 _YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
+_SIGNAL_SEPARATOR = re.compile(r"[^\w']+", flags=re.UNICODE)
 
 
 class _ReportModel(BaseModel):
@@ -195,6 +196,111 @@ class AssignmentExplanation(_ReportModel):
     search_query: str
 
 
+class ProblemAssessmentStatus(StrEnum):
+    """Triage a topic for manual problem review without asserting ground truth."""
+
+    PROBLEM_CANDIDATE = "problem_candidate"
+    TOPIC_ONLY = "topic_only"
+    UNCERTAIN = "uncertain"
+
+
+class ProblemSignalConfig(_ReportModel):
+    """Define transparent multilingual lexical triage markers and thresholds."""
+
+    schema_version: int = 1
+    problem_stems: tuple[str, ...] = (
+        "проблем",
+        "ошибк",
+        "слома",
+        "обман",
+        "мошен",
+        "жалоб",
+        "задерж",
+        "дефект",
+        "бракован",
+        "problem",
+        "issue",
+        "error",
+        "broken",
+        "scam",
+        "fraud",
+        "complaint",
+        "delay",
+        "defective",
+    )
+    problem_phrases: tuple[str, ...] = (
+        "не работает",
+        "не могу",
+        "невозможно",
+        "верните деньги",
+        "списали деньги",
+        "does not work",
+        "doesn't work",
+        "cannot",
+        "refund",
+    )
+    negated_phrases: tuple[str, ...] = (
+        "нет проблем",
+        "без проблем",
+        "не проблема",
+        "no problem",
+        "no issues",
+        "not a problem",
+    )
+    minimum_signal_records: int = Field(default=5, ge=1)
+    problem_candidate_minimum_share: float = Field(default=0.15, gt=0, le=1)
+    topic_only_maximum_share: float = Field(default=0.03, ge=0, lt=1)
+
+    @model_validator(mode="after")
+    def validate_signal_policy(self) -> ProblemSignalConfig:
+        groups = (self.problem_stems, self.problem_phrases, self.negated_phrases)
+        if any(not group or any(not value.strip() for value in group) for group in groups):
+            msg = "problem signal marker groups must contain non-empty values"
+            raise ValueError(msg)
+        if any(len(set(group)) != len(group) for group in groups):
+            msg = "problem signal marker groups cannot contain duplicates"
+            raise ValueError(msg)
+        if self.problem_candidate_minimum_share <= self.topic_only_maximum_share:
+            msg = "problem-candidate share must exceed the topic-only maximum"
+            raise ValueError(msg)
+        return self
+
+
+class TopicProblemAssessment(_ReportModel):
+    """Aggregate auditable lexical problem evidence for one final topic."""
+
+    topic_id: int = Field(ge=0)
+    topic_name: str
+    records: int = Field(ge=1)
+    signal_records: int = Field(ge=0)
+    signal_share: float = Field(ge=0, le=1)
+    signal_comments: int = Field(ge=0)
+    signal_replies: int = Field(ge=0)
+    unique_videos: int = Field(ge=0)
+    signal_videos: int = Field(ge=0)
+    signal_video_share: float = Field(ge=0, le=1)
+    signals: dict[str, int]
+    status: ProblemAssessmentStatus
+    requires_manual_review: bool
+
+
+class ProblemSignalReportManifest(_ReportModel):
+    """Bind an aggregate problem-signal report to one verified pipeline run."""
+
+    report_schema_version: int = 1
+    run_id: str
+    pipeline_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    corpus_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    labels_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config: ProblemSignalConfig
+    assessments_path: str
+    assessments_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    topics: int = Field(ge=0)
+    statuses: dict[ProblemAssessmentStatus, int]
+    private_text_included: bool = False
+    created_at: datetime
+
+
 class ProcessingFlowStep(_ReportModel):
     stage: str
     records: int = Field(ge=0)
@@ -327,6 +433,17 @@ class _AssignmentReviewSelection:
     second_cosine_similarity: float | None = None
     similarity_margin: float | None = None
     decision_reason: OutlierDecisionReason | None = None
+
+
+@dataclass
+class _ProblemSignalState:
+    records: int = 0
+    signal_records: int = 0
+    signal_comments: int = 0
+    signal_replies: int = 0
+    videos: set[str] = field(default_factory=set)
+    signal_videos: set[str] = field(default_factory=set)
+    signals: dict[str, int] = field(default_factory=dict)
 
 
 def _sha256_file(path: Path) -> str:
@@ -1249,6 +1366,192 @@ def explain_assignment(
         video_url=_safe_youtube_url(record),
         search_query=record.search_query,
     )
+
+
+def _matched_problem_signals(text: str, config: ProblemSignalConfig) -> set[str]:
+    """Return unique transparent markers after removing configured negations."""
+    normalized = " ".join(_SIGNAL_SEPARATOR.sub(" ", text.casefold()).split())
+    for phrase in config.negated_phrases:
+        normalized = normalized.replace(phrase.casefold(), " ")
+    normalized = " ".join(normalized.split())
+    tokens = normalized.split()
+    matched = {
+        stem
+        for stem in config.problem_stems
+        if any(token.startswith(stem.casefold()) for token in tokens)
+    }
+    matched.update(
+        phrase
+        for phrase in config.problem_phrases
+        if phrase.casefold() in normalized
+    )
+    return matched
+
+
+def _problem_status(
+    signal_records: int,
+    records: int,
+    config: ProblemSignalConfig,
+) -> ProblemAssessmentStatus:
+    share = signal_records / records
+    if signal_records >= config.minimum_signal_records and share >= config.problem_candidate_minimum_share:
+        return ProblemAssessmentStatus.PROBLEM_CANDIDATE
+    if share <= config.topic_only_maximum_share:
+        return ProblemAssessmentStatus.TOPIC_ONLY
+    return ProblemAssessmentStatus.UNCERTAIN
+
+
+def _accumulate_problem_signal(
+    state: _ProblemSignalState,
+    record: CorpusRecord,
+    config: ProblemSignalConfig,
+) -> None:
+    state.records += 1
+    if record.video_id:
+        state.videos.add(record.video_id)
+    matched = _matched_problem_signals(record.clean_text, config)
+    if not matched:
+        return
+    state.signal_records += 1
+    if record.text_kind.value == "comment":
+        state.signal_comments += 1
+    else:
+        state.signal_replies += 1
+    if record.video_id:
+        state.signal_videos.add(record.video_id)
+    for signal in matched:
+        state.signals[signal] = state.signals.get(signal, 0) + 1
+
+
+def _topic_problem_assessment(
+    topic: TopicRepresentation,
+    state: _ProblemSignalState,
+    config: ProblemSignalConfig,
+) -> TopicProblemAssessment:
+    if state.records == 0:
+        msg = f"topic {topic.topic_id} has no final assigned records"
+        raise ValueError(msg)
+    status = _problem_status(state.signal_records, state.records, config)
+    return TopicProblemAssessment(
+        topic_id=topic.topic_id,
+        topic_name=topic.name,
+        records=state.records,
+        signal_records=state.signal_records,
+        signal_share=state.signal_records / state.records,
+        signal_comments=state.signal_comments,
+        signal_replies=state.signal_replies,
+        unique_videos=len(state.videos),
+        signal_videos=len(state.signal_videos),
+        signal_video_share=len(state.signal_videos) / len(state.videos) if state.videos else 0,
+        signals=dict(sorted(state.signals.items(), key=lambda item: (-item[1], item[0]))),
+        status=status,
+        requires_manual_review=status != ProblemAssessmentStatus.TOPIC_ONLY,
+    )
+
+
+def assess_topic_problem_signals(
+    artifacts: AnalysisArtifacts,
+    *,
+    config: ProblemSignalConfig | None = None,
+) -> list[TopicProblemAssessment]:
+    """Triage final topics using aggregate lexical evidence, never as ground truth.
+
+    Each retained corpus row contributes at most once to ``signal_records`` and once
+    per unique matched marker. Semantic/exact duplicate counts are not expanded.
+    HDBSCAN confidence and stability do not participate in the status.
+
+    Args:
+        artifacts: Checksum-verified artifacts for one pipeline run.
+        config: Optional explicit marker and threshold policy.
+
+    Returns:
+        One assessment per normalized topic, ordered by topic ID.
+
+    Raises:
+        ValueError: If corpus checksum, row alignment, labels, or topic counts disagree.
+
+    """
+    active_config = config or ProblemSignalConfig()
+    if _sha256_file(artifacts.corpus_path) != artifacts.corpus.corpus_sha256:
+        msg = "problem-signal corpus checksum does not match its manifest"
+        raise ValueError(msg)
+    topics = {topic.topic_id: topic for topic in artifacts.topics}
+    states = {topic_id: _ProblemSignalState() for topic_id in topics}
+    corpus_rows = 0
+    with artifacts.corpus_path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            if corpus_rows >= len(artifacts.labels):
+                msg = "problem-signal corpus contains more rows than final labels"
+                raise ValueError(msg)
+            label = int(artifacts.labels[corpus_rows])
+            record = CorpusRecord.model_validate_json(line)
+            corpus_rows += 1
+            if label < 0:
+                continue
+            if label not in states:
+                msg = f"final assignment refers to unknown topic ID: {label}"
+                raise ValueError(msg)
+            _accumulate_problem_signal(states[label], record, active_config)
+    if corpus_rows != len(artifacts.labels) or corpus_rows != artifacts.summary.records:
+        msg = "problem-signal corpus and final labels are not row-aligned"
+        raise ValueError(msg)
+    return [
+        _topic_problem_assessment(topic, states[topic_id], active_config)
+        for topic_id, topic in topics.items()
+    ]
+
+
+def write_problem_signal_report(
+    artifacts: AnalysisArtifacts,
+    output_dir: Path,
+    *,
+    config: ProblemSignalConfig | None = None,
+    overwrite: bool = False,
+) -> ProblemSignalReportManifest:
+    """Write a checksum-bound aggregate problem-triage report outside the source run."""
+    target = output_dir.resolve()
+    if target.is_relative_to(artifacts.run_dir.resolve()):
+        msg = "problem-signal reports must be stored outside the ML run directory"
+        raise ValueError(msg)
+    assessments = assess_topic_problem_signals(artifacts, config=config)
+    active_config = config or ProblemSignalConfig()
+    assessments_path = target / "problem-signals.jsonl"
+    manifest_path = target / "problem-signals-manifest.json"
+    if not overwrite and (assessments_path.exists() or manifest_path.exists()):
+        msg = f"problem-signal report already exists: {target}"
+        raise FileExistsError(msg)
+    target.mkdir(parents=True, exist_ok=True)
+    assessments_tmp = assessments_path.with_name(f".{assessments_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with assessments_tmp.open("w", encoding="utf-8") as target_file:
+        for assessment in assessments:
+            target_file.write(f"{assessment.model_dump_json()}\n")
+    assessments_tmp.replace(assessments_path)
+    labels_sha256 = (
+        artifacts.reassignment.final_labels_sha256
+        if artifacts.reassignment is not None
+        else artifacts.clustering.labels_sha256
+    )
+    statuses = dict.fromkeys(ProblemAssessmentStatus, 0)
+    for assessment in assessments:
+        statuses[assessment.status] += 1
+    manifest = ProblemSignalReportManifest(
+        run_id=artifacts.run_id,
+        pipeline_manifest_sha256=artifacts.pipeline_manifest_sha256,
+        corpus_sha256=artifacts.corpus.corpus_sha256,
+        labels_sha256=labels_sha256,
+        config=active_config,
+        assessments_path=str(assessments_path),
+        assessments_sha256=_sha256_file(assessments_path),
+        topics=len(assessments),
+        statuses=statuses,
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest
 
 
 def _lineage_check(name: str, expression: str, passed: bool, details: str) -> DataLineageCheck:
