@@ -158,6 +158,43 @@ class AssignmentReviewComment(_ReportModel):
     search_query: str
 
 
+class AssignmentOutcome(StrEnum):
+    """Describe how a record received its final topic state."""
+
+    ORIGINAL_CLUSTER_MEMBER = "original_cluster_member"
+    REASSIGNED_OUTLIER = "reassigned_outlier"
+    REMAINING_OUTLIER = "remaining_outlier"
+
+
+class AssignmentExplanation(_ReportModel):
+    """Explain one persisted assignment using provenance-safe, typed evidence."""
+
+    record_index: int = Field(ge=0)
+    outcome: AssignmentOutcome
+    assigned_topic_id: int | None = Field(default=None, ge=0)
+    candidate_topic_id: int | None = Field(default=None, ge=0)
+    topic_name: str | None = None
+    topic_keywords: list[str]
+    hdbscan_probability: float | None = Field(default=None, ge=0, le=1)
+    best_cosine_similarity: float | None = Field(default=None, ge=-1, le=1)
+    second_cosine_similarity: float | None = Field(default=None, ge=-1, le=1)
+    similarity_margin: float | None = Field(default=None, ge=0, le=2)
+    decision_reason: OutlierDecisionReason | None = None
+    decision_thresholds: dict[str, float]
+    explanation: str
+    representative_context: list[RepresentativeComment]
+    text: str
+    text_kind: str
+    parent_record_id: str | None = None
+    published_at: datetime | None = None
+    like_count: int = Field(ge=0)
+    duplicate_count: int = Field(ge=1)
+    video_title: str
+    video_channel: str
+    video_url: str
+    search_query: str
+
+
 class ProcessingFlowStep(_ReportModel):
     stage: str
     records: int = Field(ge=0)
@@ -1043,6 +1080,174 @@ def assignment_review_comments(
             item.review_kind,
             item.rank,
         ),
+    )
+
+
+def _record_at_index(artifacts: AnalysisArtifacts, record_index: int) -> CorpusRecord:
+    """Read one corpus row while validating the complete persisted row count."""
+    selected = None
+    corpus_rows = 0
+    with artifacts.corpus_path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            if corpus_rows == record_index:
+                selected = CorpusRecord.model_validate_json(line)
+            corpus_rows += 1
+    if corpus_rows != artifacts.summary.records:
+        msg = f"corpus rows {corpus_rows} do not match assignments {artifacts.summary.records}"
+        raise ValueError(msg)
+    if selected is None:
+        msg = f"record index {record_index} is outside the corpus"
+        raise IndexError(msg)
+    return selected
+
+
+def _assignment_state(
+    artifacts: AnalysisArtifacts,
+    record_index: int,
+    original_label: int,
+    original_probability: float,
+    decisions: tuple[OutlierDecision, ...],
+) -> tuple[AssignmentOutcome, int | None, int | None, OutlierDecision | None, str]:
+    """Resolve one original label and optional stage-11 decision into a final state."""
+    decision = next((item for item in decisions if item.record_index == record_index), None)
+    final_label = int(artifacts.labels[record_index])
+    if original_label >= 0:
+        if decision is not None or final_label != original_label:
+            msg = f"original member {record_index} has an inconsistent final assignment"
+            raise ValueError(msg)
+        return (
+            AssignmentOutcome.ORIGINAL_CLUSTER_MEMBER,
+            original_label,
+            None,
+            None,
+            f"HDBSCAN assigned this record directly with membership probability {original_probability:.4f}.",
+        )
+    if decision is None:
+        if artifacts.reassignment is not None or final_label != -1:
+            msg = f"original outlier {record_index} has no consistent reassignment decision"
+            raise ValueError(msg)
+        return (
+            AssignmentOutcome.REMAINING_OUTLIER,
+            None,
+            None,
+            None,
+            "HDBSCAN marked this record as an outlier and no reassignment stage was run.",
+        )
+    if final_label != decision.final_label:
+        msg = f"outlier decision {record_index} disagrees with the final labels"
+        raise ValueError(msg)
+    if decision.reassigned:
+        return (
+            AssignmentOutcome.REASSIGNED_OUTLIER,
+            decision.final_label,
+            decision.best_topic,
+            decision,
+            "Stage 11 accepted the nearest eligible topic using cosine similarity and the persisted margin rules.",
+        )
+    return (
+        AssignmentOutcome.REMAINING_OUTLIER,
+        None,
+        decision.best_topic,
+        decision,
+        f"Stage 11 kept this record as an outlier: {decision.reason.value}.",
+    )
+
+
+def explain_assignment(
+    artifacts: AnalysisArtifacts,
+    record_index: int,
+    *,
+    representative_limit: int = 3,
+) -> AssignmentExplanation:
+    """Explain one existing corpus assignment without rerunning an ML stage.
+
+    Original HDBSCAN probability and optional stage-11 cosine measurements are
+    reported in distinct fields. Persisted representative comments provide human
+    context for the assigned or candidate topic; they are not presented as the
+    mathematical cause of the assignment. Text and context omit author identity.
+
+    Args:
+        artifacts: Checksum-verified artifacts for one pipeline run.
+        record_index: Zero-based row index in the final corpus.
+        representative_limit: Maximum persisted topic representatives used as context.
+
+    Returns:
+        One provenance-safe explanation with source text and optional topic context.
+
+    Raises:
+        FileNotFoundError: If an explanation artifact is missing.
+        IndexError: If ``record_index`` is outside the final corpus.
+        ValueError: If parameters, checksums, or assignments are inconsistent.
+
+    """
+    if type(record_index) is not int or record_index < 0:
+        msg = "record_index must be a non-negative integer"
+        raise ValueError(msg)
+    if type(representative_limit) is not int or representative_limit < 0:
+        msg = "representative_limit must be a non-negative integer"
+        raise ValueError(msg)
+    labels, probabilities = _load_original_assignments(artifacts)
+    if record_index >= len(labels):
+        msg = f"record index {record_index} is outside the corpus"
+        raise IndexError(msg)
+    if len(artifacts.labels) != len(labels):
+        msg = "final and original assignments differ in length"
+        raise ValueError(msg)
+    decisions = _load_outlier_decisions(artifacts, labels)
+    outcome, assigned_topic, candidate_topic, decision, explanation = _assignment_state(
+        artifacts,
+        record_index,
+        int(labels[record_index]),
+        float(probabilities[record_index]),
+        decisions,
+    )
+    topic_id = assigned_topic if assigned_topic is not None else candidate_topic
+    topics = {topic.topic_id: topic for topic in artifacts.topics}
+    if topic_id is not None and topic_id not in topics:
+        msg = f"assignment refers to unknown topic ID: {topic_id}"
+        raise ValueError(msg)
+    topic = topics.get(topic_id) if topic_id is not None else None
+    context = (
+        representative_comments(artifacts, n=representative_limit, topic_id=topic_id)
+        if topic_id is not None and representative_limit > 0
+        else []
+    )
+    thresholds: dict[str, float] = {}
+    if artifacts.reassignment is not None:
+        config = artifacts.reassignment.config
+        thresholds = {
+            "similarity_threshold": config.similarity_threshold,
+            "single_topic_similarity_threshold": config.single_topic_similarity_threshold,
+            "margin_threshold": config.margin_threshold,
+        }
+    record = _record_at_index(artifacts, record_index)
+    return AssignmentExplanation(
+        record_index=record_index,
+        outcome=outcome,
+        assigned_topic_id=assigned_topic,
+        candidate_topic_id=candidate_topic,
+        topic_name=topic.name if topic is not None else None,
+        topic_keywords=[keyword.term for keyword in topic.keywords] if topic is not None else [],
+        hdbscan_probability=(float(probabilities[record_index]) if int(labels[record_index]) >= 0 else None),
+        best_cosine_similarity=decision.best_similarity if decision is not None else None,
+        second_cosine_similarity=decision.second_similarity if decision is not None else None,
+        similarity_margin=decision.margin if decision is not None else None,
+        decision_reason=decision.reason if decision is not None else None,
+        decision_thresholds=thresholds,
+        explanation=explanation,
+        representative_context=context,
+        text=record.text,
+        text_kind=record.text_kind.value,
+        parent_record_id=record.parent_record_id,
+        published_at=record.published_at,
+        like_count=record.like_count,
+        duplicate_count=record.duplicate_count,
+        video_title=record.video_title,
+        video_channel=record.video_channel,
+        video_url=_safe_youtube_url(record),
+        search_query=record.search_query,
     )
 
 

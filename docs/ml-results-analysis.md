@@ -82,6 +82,25 @@ unique and in-range indices, original-outlier status, and final-label consistenc
 show low-probability original members. The report reads existing artifacts only, omits authors, validates source
 links, and performs no embeddings or clustering work.
 
+## Individual assignment explanation
+
+Set `EXPLAIN_RECORD_INDEX` to a zero-based final-corpus row and enable `SHOW_PRIVATE_TEXT=True`. The notebook's
+`show_assignment_explanation()` view identifies exactly one of three persisted outcomes:
+
+- `original_cluster_member`: assigned directly by HDBSCAN, with membership probability;
+- `reassigned_outlier`: originally an HDBSCAN outlier and accepted by stage 11, with cosine similarities, margin,
+  decision thresholds, and reason;
+- `remaining_outlier`: not assigned, with the optional nearest candidate topic and rejection reason.
+
+`assigned_topic_id` is the final class and remains empty for a surviving outlier. `candidate_topic_id` records only
+the nearest topic considered during reassignment and is never relabelled as an assignment. The explanation also
+shows topic keywords and up to `EXPLANATION_REPRESENTATIVES` persisted representative comments. These examples are
+human-readable topic context—not the mathematical cause of HDBSCAN membership or stage-11 acceptance.
+
+The API validates the original assignment checksums, decision checksum and alignment, selected final label, corpus
+row count, topic ID, and representative artifacts. It does not calculate new embeddings, distances, labels, or
+probabilities. Source text remains behind the notebook privacy opt-in, and author identity is omitted.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

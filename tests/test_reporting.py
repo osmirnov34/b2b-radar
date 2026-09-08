@@ -17,12 +17,15 @@ from src.ml.outlier_reassignment import (
     FinalClusterSummary,
     OutlierDecision,
     OutlierDecisionReason,
+    OutlierReassignmentConfig,
     OutlierReassignmentManifest,
     OutlierReassignmentMetrics,
 )
 from src.ml.reporting import (
     AnalysisArtifacts,
     AnalysisSummary,
+    AssignmentExplanation,
+    AssignmentOutcome,
     AssignmentReviewComment,
     AssignmentReviewKind,
     ClusterCard,
@@ -34,6 +37,7 @@ from src.ml.reporting import (
     assignment_review_comments,
     build_cluster_cards,
     build_data_lineage,
+    explain_assignment,
     get_cluster_card,
     processing_flow,
     representative_comments,
@@ -402,11 +406,14 @@ def _review_artifacts(tmp_path: Path) -> AnalysisArtifacts:
     reassignment = OutlierReassignmentManifest.model_construct(
         decisions_path=str(decisions_path),
         decisions_sha256=_sha256(decisions_path),
+        config=OutlierReassignmentConfig(),
         metrics=OutlierReassignmentMetrics.model_construct(original_outliers=3),
     )
     return replace(
         artifacts,
         clustering=clustering,
+        labels=np.asarray([0, 0, 0, 0, -1, -1], dtype=np.int64),
+        confidence=np.asarray([0.91, 0.21, 0.73, 0.87, 0.84, 0.0], dtype=np.float32),
         reassignment=reassignment,
         summary=artifacts.summary.model_copy(update={"records": 6}),
     )
@@ -654,3 +661,61 @@ def test_assignment_review_rejects_tampered_outlier_decisions(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="checksum mismatch"):
         assignment_review_comments(artifacts)
+
+
+def test_explain_original_assignment_keeps_hdbscan_evidence_distinct(tmp_path: Path) -> None:
+    explanation = explain_assignment(_review_artifacts(tmp_path), 1, representative_limit=2)
+
+    assert isinstance(explanation, AssignmentExplanation)
+    assert explanation.outcome == AssignmentOutcome.ORIGINAL_CLUSTER_MEMBER
+    assert explanation.assigned_topic_id == 0
+    assert explanation.candidate_topic_id is None
+    assert explanation.hdbscan_probability == pytest.approx(0.21)
+    assert explanation.best_cosine_similarity is None
+    assert len(explanation.representative_context) == 2
+    assert explanation.topic_keywords == ["delivery"]
+    assert "author" not in AssignmentExplanation.model_fields
+
+
+def test_explain_reassigned_outlier_reports_decision_and_thresholds(tmp_path: Path) -> None:
+    explanation = explain_assignment(_review_artifacts(tmp_path), 3)
+
+    assert explanation.outcome == AssignmentOutcome.REASSIGNED_OUTLIER
+    assert explanation.assigned_topic_id == explanation.candidate_topic_id == 0
+    assert explanation.hdbscan_probability is None
+    assert explanation.best_cosine_similarity == 0.87
+    assert explanation.similarity_margin == 0.06
+    assert explanation.decision_reason == OutlierDecisionReason.REASSIGNED
+    assert explanation.decision_thresholds == {
+        "similarity_threshold": 0.85,
+        "single_topic_similarity_threshold": 0.9,
+        "margin_threshold": 0.05,
+    }
+
+
+def test_explain_remaining_outliers_distinguishes_candidate_from_assignment(tmp_path: Path) -> None:
+    candidate = explain_assignment(_review_artifacts(tmp_path), 4, representative_limit=1)
+    no_candidate = explain_assignment(_review_artifacts(tmp_path), 5)
+
+    assert candidate.outcome == no_candidate.outcome == AssignmentOutcome.REMAINING_OUTLIER
+    assert candidate.assigned_topic_id is None
+    assert candidate.candidate_topic_id == 0
+    assert candidate.decision_reason == OutlierDecisionReason.BELOW_SIMILARITY
+    assert len(candidate.representative_context) == 1
+    assert no_candidate.assigned_topic_id is no_candidate.candidate_topic_id is None
+    assert no_candidate.representative_context == []
+    assert no_candidate.decision_reason == OutlierDecisionReason.NO_ELIGIBLE_TOPIC
+
+
+def test_explain_assignment_validates_indices_limits_and_final_alignment(tmp_path: Path) -> None:
+    artifacts = _review_artifacts(tmp_path)
+    for invalid_index in (-1, 1.5, True):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            explain_assignment(artifacts, invalid_index)  # type: ignore[arg-type]
+    with pytest.raises(IndexError, match="outside the corpus"):
+        explain_assignment(artifacts, 6)
+    with pytest.raises(ValueError, match="non-negative integer"):
+        explain_assignment(artifacts, 0, representative_limit=-1)
+    inconsistent = replace(artifacts, labels=np.asarray([0, 0, 0, -1, -1, -1], dtype=np.int64))
+    with pytest.raises(ValueError, match="disagrees with the final labels"):
+        explain_assignment(inconsistent, 3)

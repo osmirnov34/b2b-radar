@@ -66,6 +66,10 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "best_cosine_similarity" in source
     assert "similarity_margin" in source
     assert "candidate topic ID" in source
+    assert "EXPLAIN_RECORD_INDEX = None" in source
+    assert "def show_assignment_explanation(" in source
+    assert "result = explain_assignment(" in source
+    assert "Representative topic context (not the mathematical cause of assignment)" in source
     assert 'hyperlinks="html"' in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source
