@@ -24,6 +24,12 @@ from src.ml.clustering import (
     cluster_corpus,
     normalize_cluster_labels,
 )
+from src.ml.clustering_experiments import (
+    ClusteringGridConfig,
+    ClusteringGridManifest,
+    ClusteringGridResult,
+    run_clustering_grid,
+)
 from src.ml.config import (
     CleaningConfig,
     DeduplicationConfig,
@@ -216,6 +222,9 @@ __all__ = [
     "ClusterRecord",
     "ClusterSummary",
     "Clusterer",
+    "ClusteringGridConfig",
+    "ClusteringGridManifest",
+    "ClusteringGridResult",
     "ClusteringManifest",
     "ClusteringMetrics",
     "CommentRecord",
@@ -339,6 +348,7 @@ __all__ = [
     "reassign_outliers",
     "reduce_dimensions",
     "representative_comments",
+    "run_clustering_grid",
     "run_semantic_deduplication",
     "semantic_deduplicate",
     "split_comments_jsonl",

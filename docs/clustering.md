@@ -57,3 +57,34 @@ last. Existing results require `--force`.
 a model from an untrusted source or before verifying its SHA-256 and origin.
 
 Stages 10 and 11 consume normalized labels, probabilities, summary, and `clustering-manifest.json`.
+
+## Min-cluster-size experiment
+
+Use `notebooks/03_colab_clustering_grid.ipynb` to compare the fixed grid `[50, 100, 150, 250]` after a source run has
+completed stage 8. Every variant uses the same checksum-bound development corpus and `clustering-reduced.npy`; only
+`min_cluster_size` changes. The source run is never modified.
+
+Grid checkpoints are stored under
+`/content/drive/MyDrive/b2b-radar/ml-experiments/<run-id>/min-cluster-size-grid/`. Each variant owns a complete normal
+clustering manifest, labels, probabilities, summary, and model. After a Colab disconnect, rerunning the grid verifies
+their checksums and skips completed variants. A partial, tampered, or differently configured directory blocks rather
+than overwriting evidence.
+
+The final `clustering-grid-manifest.json` binds every result to the reduction, reduced matrix, corpus, complete base
+HDBSCAN configuration, and variant manifest checksum. Its comparison includes cluster count, outlier share, cluster
+sizes, mean membership probability, low-confidence share, dominant-cluster share, Relative Validity, DBCV when
+configured, and warnings. These diagnostic labels do not replace stage 9 of the source pipeline automatically.
+
+The same operation is available as a CLI:
+
+```bash
+python scripts/run_clustering_grid.py \
+  /path/to/08-reduction/clustering-reduced.npy \
+  --reduction-manifest /path/to/08-reduction/clustering-manifest.json \
+  --corpus-manifest /path/to/07-corpus/corpus-manifest.json \
+  --config configs/clustering-grid.example.json \
+  --output-dir /path/outside/ml-runs/min-cluster-size-grid
+```
+
+Do not choose the production value from outlier share alone. Topic coherence, stability, source concentration, and
+manual validation are separate decision criteria covered by later interpretability stages.
