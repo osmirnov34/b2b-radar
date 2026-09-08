@@ -219,6 +219,66 @@ class ClusterStabilityManifest(_ExperimentModel):
     created_at: datetime
 
 
+class ClusterHierarchyConfig(_ExperimentModel):
+    """Define when an empirical parent edge violates near-containment."""
+
+    schema_version: int = 1
+    minimum_parent_containment: float = Field(default=0.8, gt=0, le=1)
+
+
+class ClusterHierarchyNode(_ExperimentModel):
+    """Represent one cluster at one local grid resolution."""
+
+    node_id: str = Field(pattern=r"^mcs-[0-9]+-cluster-[0-9]+$")
+    level_index: int = Field(ge=0)
+    min_cluster_size: int = Field(ge=2)
+    cluster_id: int = Field(ge=0)
+    records: int = Field(ge=1)
+    trajectory_id: int = Field(ge=0)
+    stability_level: StabilityLevel
+    root: bool
+    leaf: bool
+
+
+class ClusterHierarchyEdge(_ExperimentModel):
+    """Represent one material child-parent overlap between adjacent levels."""
+
+    child_node_id: str
+    parent_node_id: str
+    primary: bool
+    overlap_records: int = Field(ge=1)
+    child_containment: float = Field(gt=0, le=1)
+    parent_composition: float = Field(gt=0, le=1)
+    jaccard: float = Field(gt=0, le=1)
+    transition_status: ClusterTransitionStatus
+    nesting_violation: bool
+
+
+class ClusterHierarchyManifest(_ExperimentModel):
+    """Bind the empirical hierarchy to matching and stability checkpoints."""
+
+    schema_version: int = 1
+    stability_manifest_path: str
+    stability_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    matching_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transitions_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    trajectories_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config: ClusterHierarchyConfig
+    grid_sizes: list[int]
+    nodes_path: str
+    nodes_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    edges_path: str
+    edges_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    nodes: int = Field(ge=0)
+    edges: int = Field(ge=0)
+    primary_edges: int = Field(ge=0)
+    secondary_edges: int = Field(ge=0)
+    roots: int = Field(ge=0)
+    leaves: int = Field(ge=0)
+    nesting_violations: int = Field(ge=0)
+    created_at: datetime
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -879,3 +939,209 @@ def analyze_grid_stability(
     manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
     manifest_tmp.replace(manifest_path)
     return manifest, trajectories
+
+
+def _load_stability_checkpoint(
+    stability_manifest_path: Path,
+) -> tuple[
+    ClusterStabilityManifest,
+    tuple[ClusterStability, ...],
+    tuple[ClusterTransition, ...],
+]:
+    """Load stability and matching artifacts as one verified provenance chain."""
+    if not stability_manifest_path.is_file():
+        msg = f"cluster-stability manifest is missing: {stability_manifest_path}"
+        raise FileNotFoundError(msg)
+    stability = ClusterStabilityManifest.model_validate_json(
+        stability_manifest_path.read_text(encoding="utf-8"),
+    )
+    trajectories_path = Path(stability.trajectories_path).resolve()
+    if not trajectories_path.is_relative_to(stability_manifest_path.resolve().parent):
+        msg = "stability trajectories escape their checkpoint directory"
+        raise ValueError(msg)
+    if not trajectories_path.is_file() or _sha256_file(trajectories_path) != stability.trajectories_sha256:
+        msg = "stability trajectories are missing or have a checksum mismatch"
+        raise ValueError(msg)
+    trajectories = tuple(
+        ClusterStability.model_validate_json(line)
+        for line in trajectories_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+    if len(trajectories) != stability.trajectories:
+        msg = "stability trajectory count disagrees with its manifest"
+        raise ValueError(msg)
+    matching_path = Path(stability.matching_manifest_path)
+    if not matching_path.is_file() or _sha256_file(matching_path) != stability.matching_manifest_sha256:
+        msg = "stability matching manifest is missing or has a checksum mismatch"
+        raise ValueError(msg)
+    matching, transitions, grid_sizes = _load_matching_checkpoint(matching_path)
+    if (
+        matching.transitions_sha256 != stability.transitions_sha256
+        or grid_sizes != stability.grid_sizes
+    ):
+        msg = "stability checkpoint disagrees with cluster matching"
+        raise ValueError(msg)
+    return stability, trajectories, transitions
+
+
+def _hierarchy_node_id(size: int, cluster_id: int) -> str:
+    return f"mcs-{size}-cluster-{cluster_id}"
+
+
+def _build_hierarchy(
+    stability: ClusterStabilityManifest,
+    trajectories: tuple[ClusterStability, ...],
+    transitions: tuple[ClusterTransition, ...],
+    config: ClusterHierarchyConfig,
+) -> tuple[tuple[ClusterHierarchyNode, ...], tuple[ClusterHierarchyEdge, ...]]:
+    """Build an empirical DAG without discarding secondary material overlaps."""
+    trajectory_by_node: dict[NodeKey, ClusterStability] = {}
+    records_by_node: dict[NodeKey, int] = {}
+    for trajectory in trajectories:
+        for node in trajectory.nodes:
+            key = (node.min_cluster_size, node.cluster_id)
+            if key in trajectory_by_node:
+                msg = f"hierarchy node {key} belongs to multiple trajectories"
+                raise ValueError(msg)
+            trajectory_by_node[key] = trajectory
+            records_by_node[key] = node.records
+    material = tuple(
+        item
+        for item in transitions
+        if item.source_cluster_id is not None and item.target_cluster_id is not None
+    )
+    primary_children = {
+        (item.source_min_cluster_size, item.source_cluster_id)
+        for item in material
+        if item.primary_match
+    }
+    primary_parents = {
+        (item.target_min_cluster_size, item.target_cluster_id)
+        for item in material
+        if item.primary_match
+    }
+    edges = []
+    for item in material:
+        child_key = (item.source_min_cluster_size, item.source_cluster_id)
+        parent_key = (item.target_min_cluster_size, item.target_cluster_id)
+        if child_key not in trajectory_by_node or parent_key not in trajectory_by_node:
+            msg = "material hierarchy edge refers to a cluster missing from stability trajectories"
+            raise ValueError(msg)
+        if records_by_node[child_key] != item.source_records or records_by_node[parent_key] != item.target_records:
+            msg = "hierarchy edge cluster sizes disagree with stability trajectories"
+            raise ValueError(msg)
+        edges.append(
+            ClusterHierarchyEdge(
+                child_node_id=_hierarchy_node_id(*child_key),
+                parent_node_id=_hierarchy_node_id(*parent_key),
+                primary=item.primary_match,
+                overlap_records=item.overlap_records,
+                child_containment=item.source_retention,
+                parent_composition=item.target_composition,
+                jaccard=item.jaccard,
+                transition_status=item.status,
+                nesting_violation=item.source_retention < config.minimum_parent_containment,
+            ),
+        )
+    level_indices = {size: index for index, size in enumerate(stability.grid_sizes)}
+    nodes = tuple(
+        ClusterHierarchyNode(
+            node_id=_hierarchy_node_id(*key),
+            level_index=level_indices[key[0]],
+            min_cluster_size=key[0],
+            cluster_id=key[1],
+            records=records_by_node[key],
+            trajectory_id=trajectory_by_node[key].trajectory_id,
+            stability_level=trajectory_by_node[key].level,
+            root=key not in primary_children,
+            leaf=key not in primary_parents,
+        )
+        for key in sorted(trajectory_by_node)
+    )
+    return nodes, tuple(edges)
+
+
+def build_grid_hierarchy(
+    stability_manifest_path: Path,
+    *,
+    config: ClusterHierarchyConfig | None = None,
+) -> tuple[
+    ClusterHierarchyManifest,
+    tuple[ClusterHierarchyNode, ...],
+    tuple[ClusterHierarchyEdge, ...],
+]:
+    """Build and checkpoint an empirical multi-resolution cluster DAG."""
+    active_config = config or ClusterHierarchyConfig()
+    stability, trajectories, transitions = _load_stability_checkpoint(stability_manifest_path)
+    nodes, edges = _build_hierarchy(stability, trajectories, transitions, active_config)
+    output_dir = stability_manifest_path.resolve().parent
+    nodes_path = output_dir / "cluster-hierarchy-nodes.jsonl"
+    edges_path = output_dir / "cluster-hierarchy-edges.jsonl"
+    manifest_path = output_dir / "cluster-hierarchy-manifest.json"
+    existing_count = sum(path.exists() for path in (nodes_path, edges_path, manifest_path))
+    if existing_count not in {0, 3}:
+        msg = "incomplete cluster-hierarchy checkpoint requires manual inspection"
+        raise FileExistsError(msg)
+    if manifest_path.exists():
+        existing = ClusterHierarchyManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+        if (
+            existing.stability_manifest_sha256 != _sha256_file(stability_manifest_path)
+            or existing.matching_manifest_sha256 != stability.matching_manifest_sha256
+            or existing.transitions_sha256 != stability.transitions_sha256
+            or existing.trajectories_sha256 != stability.trajectories_sha256
+            or existing.config != active_config
+            or _sha256_file(nodes_path) != existing.nodes_sha256
+            or _sha256_file(edges_path) != existing.edges_sha256
+        ):
+            msg = "existing cluster-hierarchy checkpoint is incompatible or damaged"
+            raise ValueError(msg)
+        persisted_nodes = tuple(
+            ClusterHierarchyNode.model_validate_json(line)
+            for line in nodes_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        persisted_edges = tuple(
+            ClusterHierarchyEdge.model_validate_json(line)
+            for line in edges_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if persisted_nodes != nodes or persisted_edges != edges:
+            msg = "persisted hierarchy disagrees with verified stability artifacts"
+            raise ValueError(msg)
+        return existing, persisted_nodes, persisted_edges
+    nodes_tmp = nodes_path.with_name(f".{nodes_path.name}.tmp")
+    edges_tmp = edges_path.with_name(f".{edges_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with nodes_tmp.open("w", encoding="utf-8") as target_file:
+        for node in nodes:
+            target_file.write(f"{node.model_dump_json()}\n")
+    with edges_tmp.open("w", encoding="utf-8") as target_file:
+        for edge in edges:
+            target_file.write(f"{edge.model_dump_json()}\n")
+    nodes_tmp.replace(nodes_path)
+    edges_tmp.replace(edges_path)
+    primary_edges = sum(edge.primary for edge in edges)
+    manifest = ClusterHierarchyManifest(
+        stability_manifest_path=str(stability_manifest_path),
+        stability_manifest_sha256=_sha256_file(stability_manifest_path),
+        matching_manifest_sha256=stability.matching_manifest_sha256,
+        transitions_sha256=stability.transitions_sha256,
+        trajectories_sha256=stability.trajectories_sha256,
+        config=active_config,
+        grid_sizes=stability.grid_sizes,
+        nodes_path=str(nodes_path),
+        nodes_sha256=_sha256_file(nodes_path),
+        edges_path=str(edges_path),
+        edges_sha256=_sha256_file(edges_path),
+        nodes=len(nodes),
+        edges=len(edges),
+        primary_edges=primary_edges,
+        secondary_edges=len(edges) - primary_edges,
+        roots=sum(node.root for node in nodes),
+        leaves=sum(node.leaf for node in nodes),
+        nesting_violations=sum(edge.nesting_violation for edge in edges),
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest, nodes, edges

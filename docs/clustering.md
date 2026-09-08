@@ -131,3 +131,27 @@ topic; it requires manual inspection.
 are checksum-bound to the matching manifest and transition file, safely reused, and never written into the source
 ML run. The Colab notebook shows the full trajectory table, stability-level counts per grid variant, and size paths
 for the largest trajectories.
+
+### Empirical cluster hierarchy
+
+The hierarchy step treats the lower `min_cluster_size` cluster as a detailed child and the adjacent higher value as
+a coarser parent. Every node keeps its local `(min_cluster_size, cluster_id)`, record count, stability trajectory,
+and stability level. Equal numeric IDs at different levels are still unrelated unless a verified overlap edge joins
+them.
+
+Mutual-primary overlaps form the navigable parent paths. All other material overlaps remain as secondary DAG edges
+instead of being discarded to manufacture a strict tree. For every edge the output preserves child containment,
+parent composition, Jaccard, overlap size, and split/merge status. `root` means that a node has no coarser primary
+parent; `leaf` means it has no more detailed primary child.
+
+Independent HDBSCAN runs are not guaranteed to be nested. An edge is therefore marked `nesting_violation` when its
+child containment is below `ClusterHierarchyConfig.minimum_parent_containment` (0.80 by default). This is a
+diagnostic threshold, not a hidden relabelling rule. The resulting structure is explicitly an empirical DAG, not an
+HDBSCAN condensed tree and not a semantic taxonomy.
+
+The files `cluster-hierarchy-nodes.jsonl`, `cluster-hierarchy-edges.jsonl`, and
+`cluster-hierarchy-manifest.json` are checksum-bound to both the stability and matching checkpoints. Partial,
+modified, or differently configured output blocks reuse. The Colab notebook displays both node and edge tables;
+its icicle chart includes primary parent paths only and uses equal node weights because independent clusters are not
+strictly nested. Actual record counts remain in hover and tables; secondary overlaps and nesting violations remain
+visible in the edge table.

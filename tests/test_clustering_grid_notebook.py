@@ -50,6 +50,13 @@ def test_clustering_grid_notebook_is_guarded_resumable_and_source_safe() -> None
     assert "ambiguous_transition" in source
     assert "Cluster stability levels by grid variant" in source
     assert "Largest mutual-primary cluster trajectories" in source
+    assert "HIERARCHY_MINIMUM_PARENT_CONTAINMENT = 0.80" in source
+    assert "build_grid_hierarchy(" in source
+    assert "primary_edges" in source
+    assert "secondary_edges" in source
+    assert "nesting_violations" in source
+    assert "go.Icicle(" in source
+    assert "Empirical primary hierarchy topology (equal node weight)" in source
 
 
 def test_clustering_grid_notebook_compares_core_metrics() -> None:

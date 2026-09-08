@@ -5,6 +5,7 @@ import pytest
 
 from src.ml.clustering import HDBSCANConfig
 from src.ml.clustering_experiments import (
+    ClusterHierarchyConfig,
     ClusteringGridConfig,
     ClusteringGridManifest,
     ClusterMatchingConfig,
@@ -12,6 +13,7 @@ from src.ml.clustering_experiments import (
     ClusterTransitionStatus,
     StabilityLevel,
     analyze_grid_stability,
+    build_grid_hierarchy,
     match_grid_clusters,
     run_clustering_grid,
 )
@@ -300,3 +302,69 @@ def test_grid_stability_rejects_inverted_thresholds() -> None:
             stable_minimum_jaccard=0.2,
             moderate_minimum_jaccard=0.3,
         )
+
+
+def _stability_checkpoint(tmp_path: Path, factory: object, sizes: tuple[int, ...]) -> Path:
+    matching_path = _matching_checkpoint(tmp_path, factory, sizes)
+    analyze_grid_stability(matching_path)
+    return matching_path.parent / "cluster-stability-manifest.json"
+
+
+def test_grid_hierarchy_builds_primary_tree_paths_for_nested_clusters(tmp_path: Path) -> None:
+    stability_path = _stability_checkpoint(tmp_path, StableFactory(), (2, 3, 4))
+
+    manifest, nodes, edges = build_grid_hierarchy(stability_path)
+
+    assert manifest.grid_sizes == [2, 3, 4]
+    assert len(nodes) == manifest.nodes == 6
+    assert len(edges) == manifest.edges == 4
+    assert manifest.primary_edges == 4
+    assert manifest.secondary_edges == 0
+    assert manifest.roots == manifest.leaves == 2
+    assert manifest.nesting_violations == 0
+    assert all(node.root == (node.min_cluster_size == 4) for node in nodes)
+    assert all(node.leaf == (node.min_cluster_size == 2) for node in nodes)
+    assert all(edge.primary for edge in edges)
+    assert all(edge.child_containment == edge.parent_composition == edge.jaccard == 1 for edge in edges)
+
+
+def test_grid_hierarchy_preserves_secondary_edges_and_nesting_violations(tmp_path: Path) -> None:
+    stability_path = _stability_checkpoint(tmp_path, SplitMergeFactory(), (2, 3))
+
+    manifest, nodes, edges = build_grid_hierarchy(stability_path)
+
+    assert len(nodes) == 4
+    assert len(edges) == 4
+    assert manifest.primary_edges == 1
+    assert manifest.secondary_edges == 3
+    assert manifest.roots == manifest.leaves == 3
+    assert manifest.nesting_violations == 4
+    assert all(edge.nesting_violation for edge in edges)
+    assert {edge.child_containment for edge in edges} == {0.5}
+
+
+def test_grid_hierarchy_resumes_and_rejects_damaged_checkpoint(tmp_path: Path) -> None:
+    stability_path = _stability_checkpoint(tmp_path, StableFactory(), (2, 3))
+    first_manifest, first_nodes, first_edges = build_grid_hierarchy(stability_path)
+
+    resumed_manifest, resumed_nodes, resumed_edges = build_grid_hierarchy(stability_path)
+
+    assert resumed_manifest == first_manifest
+    assert resumed_nodes == first_nodes
+    assert resumed_edges == first_edges
+    nodes_path = stability_path.parent / "cluster-hierarchy-nodes.jsonl"
+    nodes_path.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="incompatible or damaged"):
+        build_grid_hierarchy(stability_path)
+
+
+def test_grid_hierarchy_containment_threshold_is_configurable(tmp_path: Path) -> None:
+    stability_path = _stability_checkpoint(tmp_path, SplitMergeFactory(), (2, 3))
+
+    manifest, _, edges = build_grid_hierarchy(
+        stability_path,
+        config=ClusterHierarchyConfig(minimum_parent_containment=0.4),
+    )
+
+    assert manifest.nesting_violations == 0
+    assert not any(edge.nesting_violation for edge in edges)

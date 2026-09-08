@@ -25,6 +25,10 @@ from src.ml.clustering import (
     normalize_cluster_labels,
 )
 from src.ml.clustering_experiments import (
+    ClusterHierarchyConfig,
+    ClusterHierarchyEdge,
+    ClusterHierarchyManifest,
+    ClusterHierarchyNode,
     ClusteringGridConfig,
     ClusteringGridManifest,
     ClusteringGridResult,
@@ -39,6 +43,7 @@ from src.ml.clustering_experiments import (
     StabilityLevel,
     VariantStabilitySummary,
     analyze_grid_stability,
+    build_grid_hierarchy,
     match_grid_clusters,
     run_clustering_grid,
 )
@@ -230,6 +235,10 @@ __all__ = [
     "CleaningStats",
     "ClusterCard",
     "ClusterComment",
+    "ClusterHierarchyConfig",
+    "ClusterHierarchyEdge",
+    "ClusterHierarchyManifest",
+    "ClusterHierarchyNode",
     "ClusterMatch",
     "ClusterMatchingConfig",
     "ClusterMatchingManifest",
@@ -341,6 +350,7 @@ __all__ = [
     "build_cluster_cards",
     "build_data_lineage",
     "build_final_corpus",
+    "build_grid_hierarchy",
     "build_topic_representations",
     "classify",
     "classify_prepared_text",
