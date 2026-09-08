@@ -106,3 +106,28 @@ which means “no material match under this threshold,” not necessarily that e
 `cluster-matching-manifest.json` binds the transition file to the grid-manifest checksum and matching thresholds.
 Existing output is checksum-validated and reused; partial or changed output blocks instead of being overwritten.
 The notebook presents the complete transition table and a Sankey diagram, with mutual-best links highlighted.
+
+### Parameter stability trajectories
+
+The stability step follows only mutual-primary links from the matching checkpoint. It never forces a path through a
+secondary split/merge edge. Each trajectory retains its local `(min_cluster_size, cluster_id)` nodes and reports grid
+coverage, transitions survived, mean/minimum Jaccard, mean/minimum source retention, and whether any followed edge
+was involved in a split or merge.
+
+The default levels are deliberately explainable:
+
+- `stable`: covers the complete grid, has minimum Jaccard at least 0.50 and retention at least 0.70, with no
+  split/merge ambiguity;
+- `moderate`: covers at least half the grid, has minimum Jaccard at least 0.25 and retention at least 0.50;
+- `fragile`: has a primary continuation but misses the moderate thresholds;
+- `unmatched`: has no mutual-primary transition.
+
+Thresholds belong to `ClusterStabilityConfig` and are persisted with the result. The level is a readable summary,
+not a replacement for the component metrics. A split/merge trajectory may be moderate but cannot be `stable` under
+the default policy. A cluster that is `unmatched` under the material-overlap threshold is not automatically a bad
+topic; it requires manual inspection.
+
+`cluster-stability.jsonl` and `cluster-stability-manifest.json` are stored beside the grid and matching outputs. They
+are checksum-bound to the matching manifest and transition file, safely reused, and never written into the source
+ML run. The Colab notebook shows the full trajectory table, stability-level counts per grid variant, and size paths
+for the largest trajectories.

@@ -8,7 +8,10 @@ from src.ml.clustering_experiments import (
     ClusteringGridConfig,
     ClusteringGridManifest,
     ClusterMatchingConfig,
+    ClusterStabilityConfig,
     ClusterTransitionStatus,
+    StabilityLevel,
+    analyze_grid_stability,
     match_grid_clusters,
     run_clustering_grid,
 )
@@ -35,6 +38,11 @@ class SplitMergeFactory:
         if config.min_cluster_size == 2:
             return FakeClusterer([0, 0, 0, 0, 1, 1, 1, 1], [0.8] * 8)
         return FakeClusterer([0, 0, 1, 1, 0, 0, 1, 1], [0.8] * 8)
+
+
+class StableFactory:
+    def __call__(self, _config: HDBSCANConfig) -> FakeClusterer:
+        return FakeClusterer([0, 0, 0, 0, 1, 1, 1, 1], [0.8] * 8)
 
 
 def _inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -226,3 +234,69 @@ def test_grid_cluster_matching_threshold_and_checkpoint_integrity(tmp_path: Path
     (output / "cluster-transitions.jsonl").write_text("tampered\n", encoding="utf-8")
     with pytest.raises(ValueError, match="incompatible or damaged"):
         match_grid_clusters(grid_path, config=ClusterMatchingConfig(minimum_overlap_share=0.6))
+
+
+def _matching_checkpoint(tmp_path: Path, factory: object, sizes: tuple[int, ...]) -> Path:
+    reduced, reduction_manifest, corpus_manifest = _inputs(tmp_path)
+    output = tmp_path / "experiments" / "grid"
+    run_clustering_grid(
+        reduced,
+        reduction_manifest,
+        corpus_manifest,
+        output,
+        config=ClusteringGridConfig(min_cluster_sizes=sizes),
+        clusterer_factory=factory,  # type: ignore[arg-type]
+    )
+    match_grid_clusters(output / "clustering-grid-manifest.json")
+    return output / "cluster-matching-manifest.json"
+
+
+def test_grid_stability_builds_complete_stable_trajectories(tmp_path: Path) -> None:
+    matching_path = _matching_checkpoint(tmp_path, StableFactory(), (2, 3, 4))
+
+    manifest, trajectories = analyze_grid_stability(matching_path)
+
+    assert manifest.grid_sizes == [2, 3, 4]
+    assert len(trajectories) == 2
+    assert all(item.level == StabilityLevel.STABLE for item in trajectories)
+    assert all(item.grid_coverage == 1 for item in trajectories)
+    assert all(item.transitions_survived == 2 for item in trajectories)
+    assert all(item.minimum_jaccard == item.minimum_source_retention == 1 for item in trajectories)
+    assert manifest.levels[StabilityLevel.STABLE] == 2
+    assert all(summary.levels[StabilityLevel.STABLE] == 2 for summary in manifest.variants)
+
+
+def test_grid_stability_keeps_ambiguous_and_unmatched_trajectories_explicit(tmp_path: Path) -> None:
+    matching_path = _matching_checkpoint(tmp_path, SplitMergeFactory(), (2, 3))
+
+    _, trajectories = analyze_grid_stability(matching_path)
+
+    moderate = [item for item in trajectories if item.level == StabilityLevel.MODERATE]
+    unmatched = [item for item in trajectories if item.level == StabilityLevel.UNMATCHED]
+    assert len(moderate) == 1
+    assert moderate[0].ambiguous_transition is True
+    assert moderate[0].minimum_jaccard == 1 / 3
+    assert len(unmatched) == 2
+    assert all(item.transitions_survived == 0 for item in unmatched)
+
+
+def test_grid_stability_resumes_and_detects_checkpoint_damage(tmp_path: Path) -> None:
+    matching_path = _matching_checkpoint(tmp_path, StableFactory(), (2, 3))
+    first_manifest, first = analyze_grid_stability(matching_path)
+
+    resumed_manifest, resumed = analyze_grid_stability(matching_path)
+
+    assert resumed_manifest == first_manifest
+    assert resumed == first
+    trajectories_path = matching_path.parent / "cluster-stability.jsonl"
+    trajectories_path.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="incompatible or damaged"):
+        analyze_grid_stability(matching_path)
+
+
+def test_grid_stability_rejects_inverted_thresholds() -> None:
+    with pytest.raises(ValueError, match="stable thresholds"):
+        ClusterStabilityConfig(
+            stable_minimum_jaccard=0.2,
+            moderate_minimum_jaccard=0.3,
+        )

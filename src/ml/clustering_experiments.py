@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 _MINIMUM_CLUSTER_SIZE = 2
 ProgressCallback = Callable[[str], None]
+NodeKey = tuple[int, int]
 
 
 class _ExperimentModel(BaseModel):
@@ -132,6 +134,88 @@ class ClusterMatchingManifest(_ExperimentModel):
     transitions_path: str
     transitions_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     transitions: int = Field(ge=0)
+    created_at: datetime
+
+
+class StabilityLevel(StrEnum):
+    """Summarize robustness while preserving the underlying measurements."""
+
+    STABLE = "stable"
+    MODERATE = "moderate"
+    FRAGILE = "fragile"
+    UNMATCHED = "unmatched"
+
+
+class ClusterStabilityConfig(_ExperimentModel):
+    """Define explicit thresholds for grid-trajectory stability levels."""
+
+    schema_version: int = 1
+    stable_minimum_grid_coverage: float = Field(default=1.0, gt=0, le=1)
+    stable_minimum_jaccard: float = Field(default=0.5, ge=0, le=1)
+    stable_minimum_source_retention: float = Field(default=0.7, ge=0, le=1)
+    moderate_minimum_grid_coverage: float = Field(default=0.5, gt=0, le=1)
+    moderate_minimum_jaccard: float = Field(default=0.25, ge=0, le=1)
+    moderate_minimum_source_retention: float = Field(default=0.5, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_threshold_order(self) -> ClusterStabilityConfig:
+        pairs = (
+            (self.stable_minimum_grid_coverage, self.moderate_minimum_grid_coverage),
+            (self.stable_minimum_jaccard, self.moderate_minimum_jaccard),
+            (self.stable_minimum_source_retention, self.moderate_minimum_source_retention),
+        )
+        if any(stable < moderate for stable, moderate in pairs):
+            msg = "stable thresholds cannot be lower than moderate thresholds"
+            raise ValueError(msg)
+        return self
+
+
+class ClusterTrajectoryNode(_ExperimentModel):
+    """Identify one local cluster within a cross-variant trajectory."""
+
+    min_cluster_size: int = Field(ge=2)
+    cluster_id: int = Field(ge=0)
+    records: int = Field(ge=1)
+
+
+class ClusterStability(_ExperimentModel):
+    """Describe one mutual-primary trajectory through the parameter grid."""
+
+    trajectory_id: int = Field(ge=0)
+    nodes: list[ClusterTrajectoryNode]
+    variants_present: int = Field(ge=1)
+    grid_coverage: float = Field(gt=0, le=1)
+    transitions_survived: int = Field(ge=0)
+    mean_jaccard: float | None = Field(default=None, ge=0, le=1)
+    minimum_jaccard: float | None = Field(default=None, ge=0, le=1)
+    mean_source_retention: float | None = Field(default=None, ge=0, le=1)
+    minimum_source_retention: float | None = Field(default=None, ge=0, le=1)
+    ambiguous_transition: bool
+    level: StabilityLevel
+
+
+class VariantStabilitySummary(_ExperimentModel):
+    """Count stability levels among clusters in one grid variant."""
+
+    min_cluster_size: int = Field(ge=2)
+    clusters: int = Field(ge=0)
+    levels: dict[StabilityLevel, int]
+
+
+class ClusterStabilityManifest(_ExperimentModel):
+    """Bind trajectory stability output to one verified matching checkpoint."""
+
+    schema_version: int = 1
+    matching_manifest_path: str
+    matching_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    transitions_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config: ClusterStabilityConfig
+    grid_sizes: list[int]
+    trajectories_path: str
+    trajectories_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    trajectories: int = Field(ge=0)
+    levels: dict[StabilityLevel, int]
+    variants: list[VariantStabilitySummary]
     created_at: datetime
 
 
@@ -499,7 +583,7 @@ def match_grid_clusters(
         raise FileNotFoundError(msg)
     grid = ClusteringGridManifest.model_validate_json(grid_manifest_path.read_text(encoding="utf-8"))
     labels_by_size = _load_grid_labels(grid, grid_dir)
-    pairs = list(zip(grid.config.min_cluster_sizes, grid.config.min_cluster_sizes[1:], strict=False))
+    pairs = list(pairwise(grid.config.min_cluster_sizes))
     transitions = tuple(
         transition
         for source_size, target_size in pairs
@@ -554,3 +638,244 @@ def match_grid_clusters(
     manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
     manifest_tmp.replace(manifest_path)
     return manifest, transitions
+
+
+def _load_matching_checkpoint(
+    matching_manifest_path: Path,
+) -> tuple[ClusterMatchingManifest, tuple[ClusterTransition, ...], list[int]]:
+    """Load a checksum-verified matching checkpoint and its grid sizes."""
+    if not matching_manifest_path.is_file():
+        msg = f"cluster-matching manifest is missing: {matching_manifest_path}"
+        raise FileNotFoundError(msg)
+    matching = ClusterMatchingManifest.model_validate_json(
+        matching_manifest_path.read_text(encoding="utf-8"),
+    )
+    transitions_path = Path(matching.transitions_path).resolve()
+    if not transitions_path.is_relative_to(matching_manifest_path.resolve().parent):
+        msg = "cluster transitions escape the matching checkpoint directory"
+        raise ValueError(msg)
+    if not transitions_path.is_file() or _sha256_file(transitions_path) != matching.transitions_sha256:
+        msg = "cluster transitions are missing or have a checksum mismatch"
+        raise ValueError(msg)
+    transitions = tuple(
+        ClusterTransition.model_validate_json(line)
+        for line in transitions_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+    if len(transitions) != matching.transitions:
+        msg = "cluster transition count disagrees with its manifest"
+        raise ValueError(msg)
+    grid_path = Path(matching.grid_manifest_path)
+    if not grid_path.is_file() or _sha256_file(grid_path) != matching.grid_manifest_sha256:
+        msg = "matching checkpoint grid manifest is missing or has a checksum mismatch"
+        raise ValueError(msg)
+    grid = ClusteringGridManifest.model_validate_json(grid_path.read_text(encoding="utf-8"))
+    grid_sizes = list(grid.config.min_cluster_sizes)
+    expected_pairs = list(pairwise(grid_sizes))
+    if len(grid_sizes) < _MINIMUM_CLUSTER_SIZE or matching.compared_pairs != expected_pairs:
+        msg = "matching checkpoint does not cover adjacent grid variants"
+        raise ValueError(msg)
+    if any(
+        (item.source_min_cluster_size, item.target_min_cluster_size) not in expected_pairs
+        for item in transitions
+    ):
+        msg = "cluster transition refers to a non-adjacent grid pair"
+        raise ValueError(msg)
+    return matching, transitions, grid_sizes
+
+
+def _trajectory_level(
+    coverage: float,
+    minimum_jaccard: float | None,
+    minimum_retention: float | None,
+    ambiguous: bool,
+    transitions: int,
+    config: ClusterStabilityConfig,
+) -> StabilityLevel:
+    if transitions == 0 or minimum_jaccard is None or minimum_retention is None:
+        return StabilityLevel.UNMATCHED
+    if (
+        not ambiguous
+        and coverage >= config.stable_minimum_grid_coverage
+        and minimum_jaccard >= config.stable_minimum_jaccard
+        and minimum_retention >= config.stable_minimum_source_retention
+    ):
+        return StabilityLevel.STABLE
+    if (
+        coverage >= config.moderate_minimum_grid_coverage
+        and minimum_jaccard >= config.moderate_minimum_jaccard
+        and minimum_retention >= config.moderate_minimum_source_retention
+    ):
+        return StabilityLevel.MODERATE
+    return StabilityLevel.FRAGILE
+
+
+def _build_cluster_trajectories(
+    transitions: tuple[ClusterTransition, ...],
+    grid_sizes: list[int],
+    config: ClusterStabilityConfig,
+) -> tuple[ClusterStability, ...]:
+    """Build non-branching trajectories from mutual-primary transition edges."""
+    records: dict[NodeKey, int] = {}
+    primary_out: dict[NodeKey, tuple[NodeKey, ClusterTransition]] = {}
+    primary_in: dict[NodeKey, NodeKey] = {}
+    for item in transitions:
+        source_key = (
+            (item.source_min_cluster_size, item.source_cluster_id)
+            if item.source_cluster_id is not None
+            else None
+        )
+        target_key = (
+            (item.target_min_cluster_size, item.target_cluster_id)
+            if item.target_cluster_id is not None
+            else None
+        )
+        for key, count in ((source_key, item.source_records), (target_key, item.target_records)):
+            if key is None:
+                continue
+            if key in records and records[key] != count:
+                msg = f"cluster {key} has inconsistent sizes across transitions"
+                raise ValueError(msg)
+            records[key] = count
+        if not item.primary_match:
+            continue
+        if source_key is None or target_key is None:
+            msg = "primary cluster transition must have source and target clusters"
+            raise ValueError(msg)
+        if source_key in primary_out or target_key in primary_in:
+            msg = "primary cluster transitions are not one-to-one"
+            raise ValueError(msg)
+        primary_out[source_key] = (target_key, item)
+        primary_in[target_key] = source_key
+    roots = sorted(key for key in records if key not in primary_in)
+    visited: set[NodeKey] = set()
+    trajectories: list[ClusterStability] = []
+    for root in roots:
+        node_keys = [root]
+        edges = []
+        current = root
+        while current in primary_out:
+            target, edge = primary_out[current]
+            if target in node_keys:
+                msg = "cluster trajectory contains a cycle"
+                raise ValueError(msg)
+            edges.append(edge)
+            node_keys.append(target)
+            current = target
+        visited.update(node_keys)
+        jaccards = [edge.jaccard for edge in edges]
+        retentions = [edge.source_retention for edge in edges]
+        coverage = len(node_keys) / len(grid_sizes)
+        minimum_jaccard = min(jaccards, default=None)
+        minimum_retention = min(retentions, default=None)
+        ambiguous = any(edge.status != ClusterTransitionStatus.MATCHED for edge in edges)
+        trajectories.append(
+            ClusterStability(
+                trajectory_id=len(trajectories),
+                nodes=[
+                    ClusterTrajectoryNode(
+                        min_cluster_size=size,
+                        cluster_id=cluster_id,
+                        records=records[(size, cluster_id)],
+                    )
+                    for size, cluster_id in node_keys
+                ],
+                variants_present=len(node_keys),
+                grid_coverage=coverage,
+                transitions_survived=len(edges),
+                mean_jaccard=sum(jaccards) / len(jaccards) if jaccards else None,
+                minimum_jaccard=minimum_jaccard,
+                mean_source_retention=sum(retentions) / len(retentions) if retentions else None,
+                minimum_source_retention=minimum_retention,
+                ambiguous_transition=ambiguous,
+                level=_trajectory_level(
+                    coverage,
+                    minimum_jaccard,
+                    minimum_retention,
+                    ambiguous,
+                    len(edges),
+                    config,
+                ),
+            ),
+        )
+    if visited != records.keys():
+        msg = "not every matched cluster belongs to a stability trajectory"
+        raise ValueError(msg)
+    return tuple(trajectories)
+
+
+def _variant_stability_summaries(
+    trajectories: tuple[ClusterStability, ...],
+    grid_sizes: list[int],
+) -> list[VariantStabilitySummary]:
+    summaries = []
+    for size in grid_sizes:
+        levels = dict.fromkeys(StabilityLevel, 0)
+        clusters = 0
+        for trajectory in trajectories:
+            if any(node.min_cluster_size == size for node in trajectory.nodes):
+                levels[trajectory.level] += 1
+                clusters += 1
+        summaries.append(VariantStabilitySummary(min_cluster_size=size, clusters=clusters, levels=levels))
+    return summaries
+
+
+def analyze_grid_stability(
+    matching_manifest_path: Path,
+    *,
+    config: ClusterStabilityConfig | None = None,
+) -> tuple[ClusterStabilityManifest, tuple[ClusterStability, ...]]:
+    """Measure and checkpoint transparent stability trajectories across a grid."""
+    active_config = config or ClusterStabilityConfig()
+    matching, transitions, grid_sizes = _load_matching_checkpoint(matching_manifest_path)
+    trajectories = _build_cluster_trajectories(transitions, grid_sizes, active_config)
+    output_dir = matching_manifest_path.resolve().parent
+    trajectories_path = output_dir / "cluster-stability.jsonl"
+    manifest_path = output_dir / "cluster-stability-manifest.json"
+    if trajectories_path.exists() != manifest_path.exists():
+        msg = "incomplete cluster-stability checkpoint requires manual inspection"
+        raise FileExistsError(msg)
+    if manifest_path.exists():
+        existing = ClusterStabilityManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+        if (
+            existing.matching_manifest_sha256 != _sha256_file(matching_manifest_path)
+            or existing.transitions_sha256 != matching.transitions_sha256
+            or existing.config != active_config
+            or _sha256_file(trajectories_path) != existing.trajectories_sha256
+        ):
+            msg = "existing cluster-stability checkpoint is incompatible or damaged"
+            raise ValueError(msg)
+        persisted = tuple(
+            ClusterStability.model_validate_json(line)
+            for line in trajectories_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if persisted != trajectories:
+            msg = "persisted stability trajectories disagree with verified transitions"
+            raise ValueError(msg)
+        return existing, persisted
+    trajectories_tmp = trajectories_path.with_name(f".{trajectories_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with trajectories_tmp.open("w", encoding="utf-8") as target_file:
+        for trajectory in trajectories:
+            target_file.write(f"{trajectory.model_dump_json()}\n")
+    trajectories_tmp.replace(trajectories_path)
+    levels = dict.fromkeys(StabilityLevel, 0)
+    for trajectory in trajectories:
+        levels[trajectory.level] += 1
+    manifest = ClusterStabilityManifest(
+        matching_manifest_path=str(matching_manifest_path),
+        matching_manifest_sha256=_sha256_file(matching_manifest_path),
+        transitions_sha256=matching.transitions_sha256,
+        config=active_config,
+        grid_sizes=grid_sizes,
+        trajectories_path=str(trajectories_path),
+        trajectories_sha256=_sha256_file(trajectories_path),
+        trajectories=len(trajectories),
+        levels=levels,
+        variants=_variant_stability_summaries(trajectories, grid_sizes),
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest, trajectories

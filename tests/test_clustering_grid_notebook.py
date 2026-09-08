@@ -41,6 +41,15 @@ def test_clustering_grid_notebook_is_guarded_resumable_and_source_safe() -> None
     assert "go.Sankey(" in source
     assert "source_retention" in source
     assert "target_composition" in source
+    assert "TOP_STABILITY_TRAJECTORIES = 30" in source
+    assert "analyze_grid_stability(" in source
+    assert "ClusterStabilityConfig()" in source
+    assert "grid_coverage" in source
+    assert "minimum_jaccard" in source
+    assert "minimum_source_retention" in source
+    assert "ambiguous_transition" in source
+    assert "Cluster stability levels by grid variant" in source
+    assert "Largest mutual-primary cluster trajectories" in source
 
 
 def test_clustering_grid_notebook_compares_core_metrics() -> None:
