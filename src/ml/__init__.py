@@ -214,6 +214,7 @@ from src.ml.reporting import (
     explain_assignment,
     get_cluster_card,
     load_analysis_artifacts,
+    match_problem_signals,
     processing_flow,
     rank_problem_topics,
     representative_comments,
@@ -268,6 +269,15 @@ from src.ml.topic_representation import (
     TopicTermBackend,
     build_topic_representations,
     load_stopwords,
+)
+from src.ml.topic_search import (
+    TopicSearchConfig,
+    TopicSearchEvidence,
+    TopicSearchExportManifest,
+    TopicSearchGroup,
+    TopicSearchResult,
+    search_user_topic,
+    write_topic_search_result,
 )
 
 __all__ = [
@@ -425,6 +435,11 @@ __all__ = [
     "TopicRepresentationConfig",
     "TopicRepresentationManifest",
     "TopicRepresentationQuality",
+    "TopicSearchConfig",
+    "TopicSearchEvidence",
+    "TopicSearchExportManifest",
+    "TopicSearchGroup",
+    "TopicSearchResult",
     "TopicSummaryRow",
     "TopicTermBackend",
     "TopicVideoConcentration",
@@ -470,6 +485,7 @@ __all__ = [
     "load_stopwords",
     "match_clusters",
     "match_grid_clusters",
+    "match_problem_signals",
     "normalize_cluster_labels",
     "normalize_leakage_text",
     "prepare_text",
@@ -483,6 +499,7 @@ __all__ = [
     "run_clustering_grid",
     "run_semantic_deduplication",
     "save_manual_annotations",
+    "search_user_topic",
     "semantic_deduplicate",
     "split_comments_jsonl",
     "spreadsheet_safe_value",
@@ -500,5 +517,6 @@ __all__ = [
     "write_problem_signal_report",
     "write_split_markdown",
     "write_temporal_analysis_report",
+    "write_topic_search_result",
     "write_video_concentration_report",
 ]

@@ -98,6 +98,9 @@ Perform checksum-bound manual evaluation in
 [`notebooks/04_colab_manual_evaluation.ipynb`](notebooks/04_colab_manual_evaluation.ipynb); its restricted-data workflow
 is documented in [`docs/manual-evaluation.md`](docs/manual-evaluation.md). Generate a reproducibility record for the same
 run using the experiment-passport contract in [`docs/experiment-passport.md`](docs/experiment-passport.md).
+Search a persisted corpus for a user-defined industry or theme with
+[`notebooks/05_colab_topic_search.ipynb`](notebooks/05_colab_topic_search.ipynb); the restricted evidence and
+interpretation contract is documented in [`docs/user-topic-search.md`](docs/user-topic-search.md).
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,

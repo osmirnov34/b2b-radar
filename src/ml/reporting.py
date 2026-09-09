@@ -1334,9 +1334,7 @@ def _rank_review_candidates(
     grouped: dict[tuple[AssignmentReviewKind, int | None], list[tuple[int, _AssignmentReviewSelection]]] = {}
     for record_index, selection in candidates:
         topic_id = (
-            selection.assigned_topic_id
-            if selection.assigned_topic_id is not None
-            else selection.candidate_topic_id
+            selection.assigned_topic_id if selection.assigned_topic_id is not None else selection.candidate_topic_id
         )
         grouped.setdefault((selection.review_kind, topic_id), []).append((record_index, selection))
     selected: dict[int, _AssignmentReviewSelection] = {}
@@ -1623,17 +1621,18 @@ def _matched_problem_signals(text: str, config: ProblemSignalConfig) -> set[str]
         normalized = normalized.replace(phrase.casefold(), " ")
     normalized = " ".join(normalized.split())
     tokens = normalized.split()
-    matched = {
-        stem
-        for stem in config.problem_stems
-        if any(token.startswith(stem.casefold()) for token in tokens)
-    }
-    matched.update(
-        phrase
-        for phrase in config.problem_phrases
-        if phrase.casefold() in normalized
-    )
+    matched = {stem for stem in config.problem_stems if any(token.startswith(stem.casefold()) for token in tokens)}
+    matched.update(phrase for phrase in config.problem_phrases if phrase.casefold() in normalized)
     return matched
+
+
+def match_problem_signals(text: str, config: ProblemSignalConfig | None = None) -> tuple[str, ...]:
+    """Return transparent lexical problem markers for one text.
+
+    This public helper applies the same negation and marker policy as aggregate
+    topic assessment. Its result is evidence for review, not a severity label.
+    """
+    return tuple(sorted(_matched_problem_signals(text, config or ProblemSignalConfig())))
 
 
 def _problem_status(
@@ -1745,10 +1744,7 @@ def assess_topic_problem_signals(
     if corpus_rows != len(artifacts.labels) or corpus_rows != artifacts.summary.records:
         msg = "problem-signal corpus and final labels are not row-aligned"
         raise ValueError(msg)
-    return [
-        _topic_problem_assessment(topic, states[topic_id], active_config)
-        for topic_id, topic in topics.items()
-    ]
+    return [_topic_problem_assessment(topic, states[topic_id], active_config) for topic_id, topic in topics.items()]
 
 
 def write_problem_signal_report(
@@ -1964,10 +1960,7 @@ def _video_concentration_status(
         return VideoConcentrationStatus.INSUFFICIENT_DATA
     if metrics.top_video_share >= config.single_video_dominated_share:
         return VideoConcentrationStatus.SINGLE_VIDEO_DOMINATED
-    if (
-        metrics.top_video_share >= config.concentrated_top_video_share
-        or metrics.hhi >= config.concentrated_hhi
-    ):
+    if metrics.top_video_share >= config.concentrated_top_video_share or metrics.hhi >= config.concentrated_hhi:
         return VideoConcentrationStatus.CONCENTRATED
     return VideoConcentrationStatus.DISTRIBUTED
 
@@ -2061,10 +2054,7 @@ def assess_video_concentration(
     if corpus_rows != len(artifacts.labels) or corpus_rows != artifacts.summary.records:
         msg = "video-concentration corpus and final labels are not row-aligned"
         raise ValueError(msg)
-    return [
-        _topic_video_concentration(topic, states[topic_id], active_config)
-        for topic_id, topic in topics.items()
-    ]
+    return [_topic_video_concentration(topic, states[topic_id], active_config) for topic_id, topic in topics.items()]
 
 
 def write_video_concentration_report(
@@ -2210,9 +2200,7 @@ def _topic_temporal_trend(
         msg = f"topic {topic.topic_id} has no final assigned records"
         raise ValueError(msg)
     eligible_keys = sorted(
-        month
-        for month in state.months
-        if not (config.exclude_current_month and month == current_month)
+        month for month in state.months if not (config.exclude_current_month and month == current_month)
     )
     months = _month_sequence(eligible_keys[0], eligible_keys[-1]) if eligible_keys else []
     dated_records = state.records - state.missing_dates
@@ -2235,9 +2223,7 @@ def _topic_temporal_trend(
             records=state.months.get(month, 0),
             problem_signal_records=state.signal_months.get(month, 0),
             problem_signal_share=(
-                state.signal_months.get(month, 0) / state.months[month]
-                if state.months.get(month, 0)
-                else 0
+                state.signal_months.get(month, 0) / state.months[month] if state.months.get(month, 0) else 0
             ),
         )
         for month in months
@@ -2450,10 +2436,7 @@ def build_data_lineage(artifacts: AnalysisArtifacts) -> DataLineage:
             "flattening",
             "cleaning input comments + replies == input text units",
             cleaning.stats.input_comments + cleaning.stats.input_replies == cleaning.stats.input_text_units,
-            (
-                f"{cleaning.stats.input_comments} + {cleaning.stats.input_replies} "
-                f"== {cleaning.stats.input_text_units}"
-            ),
+            (f"{cleaning.stats.input_comments} + {cleaning.stats.input_replies} == {cleaning.stats.input_text_units}"),
         ),
         _lineage_check(
             "cleaning_to_deduplication",
