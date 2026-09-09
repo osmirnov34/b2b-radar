@@ -136,6 +136,15 @@ from src.ml.outlier_reassignment import (
     OutlierReassignmentMetrics,
     reassign_outliers,
 )
+from src.ml.privacy import (
+    PrivacyAuditManifest,
+    PrivacyAuditStatus,
+    PrivacyFinding,
+    PrivacyFindingSeverity,
+    PrivacyPolicy,
+    audit_aggregate_report,
+    spreadsheet_safe_value,
+)
 from src.ml.reporting import (
     AnalysisArtifacts,
     AnalysisSummary,
@@ -336,6 +345,11 @@ __all__ = [
     "OutlierReassignmentManifest",
     "OutlierReassignmentMetrics",
     "PreparedText",
+    "PrivacyAuditManifest",
+    "PrivacyAuditStatus",
+    "PrivacyFinding",
+    "PrivacyFindingSeverity",
+    "PrivacyPolicy",
     "ProblemAssessmentStatus",
     "ProblemPriority",
     "ProblemPriorityConfig",
@@ -390,6 +404,7 @@ __all__ = [
     "assess_topic_problem_signals",
     "assess_video_concentration",
     "assignment_review_comments",
+    "audit_aggregate_report",
     "build_cluster_cards",
     "build_data_lineage",
     "build_final_corpus",
@@ -430,6 +445,7 @@ __all__ = [
     "run_semantic_deduplication",
     "semantic_deduplicate",
     "split_comments_jsonl",
+    "spreadsheet_safe_value",
     "stratified_plot_indices",
     "summarize_numbers",
     "topic_summary_rows",

@@ -26,6 +26,7 @@ from src.ml.outlier_reassignment import (
     OutlierDecisionReason,
     OutlierReassignmentManifest,
 )
+from src.ml.privacy import spreadsheet_safe_value
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName
 from src.ml.topic_representation import RepresentativeIndices, TopicRepresentation, TopicRepresentationManifest
@@ -2751,7 +2752,8 @@ def write_analysis_tables(
         writer.writeheader()
         for row in rows:
             payload = row.model_dump()
-            payload["keywords"] = " | ".join(row.keywords)
+            payload["name"] = spreadsheet_safe_value(row.name)
+            payload["keywords"] = spreadsheet_safe_value(" | ".join(row.keywords))
             writer.writerow(payload)
     manifest = ReportManifest(
         source_pipeline_schema_version=artifacts.pipeline_schema_version,

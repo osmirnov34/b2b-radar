@@ -528,6 +528,18 @@ def test_report_refuses_overwrite_and_output_inside_run(tmp_path: Path) -> None:
         write_analysis_tables(artifacts, artifacts.run_dir / "visualizations")
 
 
+def test_analysis_csv_neutralizes_formula_like_topic_names(tmp_path: Path) -> None:
+    artifacts = _artifacts(tmp_path)
+    unsafe_topic = artifacts.topics[0].model_copy(update={"name": "=HYPERLINK('bad')"})
+    artifacts = replace(artifacts, topics=(unsafe_topic,))
+
+    write_analysis_tables(artifacts, tmp_path / "visualizations")
+
+    csv_text = (tmp_path / "visualizations/run-1/tables/topic-summary.csv").read_text(encoding="utf-8")
+    assert "'=HYPERLINK" in csv_text
+    assert ",=HYPERLINK" not in csv_text
+
+
 def test_data_lineage_explains_scopes_sources_and_flattening(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

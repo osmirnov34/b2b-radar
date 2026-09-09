@@ -109,3 +109,14 @@ def test_reporting_notebook_covers_checksum_bound_temporal_analysis() -> None:
     assert "problem_signal_relative_change" in source
     assert "excludes the current UTC month by default" in source
     assert "write_temporal_analysis_report(" in source
+
+
+def test_reporting_notebook_audits_saved_outputs_and_escapes_csv_cells() -> None:
+    source = "\n".join(_sources())
+
+    assert "def spreadsheet_safe_cell(" in source
+    assert '"""Neutralize formula-like strings before exporting a DataFrame to CSV."""' in source
+    assert "source_frame.map(spreadsheet_safe_cell)" in source
+    assert "review_frame.map(spreadsheet_safe_cell)" in source
+    assert "audit_aggregate_report(report_dir, overwrite=OVERWRITE_REPORT)" in source
+    assert "privacy_audit.status.value" in source

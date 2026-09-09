@@ -211,6 +211,35 @@ With `SAVE_REPORT=True`, `topic-temporal-trends.jsonl` contains monthly aggregat
 `topic-temporal-trends-manifest.json` binds them to the pipeline, corpus, final labels, signal policy, trend policy,
 and analysis time. Raw text, authors, video IDs, and exact publication timestamps are not exported.
 
+## Privacy and report security
+
+Reporting follows a centralized `PrivacyPolicy`. Source text, cleaned text, authors, comment and record identifiers,
+parent identifiers, search queries, video identifiers, and source URLs are forbidden in aggregate JSON/JSONL and CSV
+outputs. These values remain available only in the checksum-verified source run and in notebook views protected by
+the explicit `SHOW_PRIVATE_TEXT=True` opt-in; private views are never saved by the aggregate exporters.
+
+When `SAVE_REPORT=True`, the final notebook cell calls `audit_aggregate_report()` before declaring the report ready.
+The audit:
+
+- accepts only declared report filenames and rejects unexpected files;
+- rejects symbolic links without following them;
+- recursively checks JSON and JSONL field names;
+- checks CSV headers and formula-like cells;
+- records a warning for allowlisted HTML because embedded chart documents cannot be proven private by key inspection.
+
+Any blocked finding raises an error after writing `privacy-audit-manifest.json`, so the reason remains inspectable.
+The manifest contains the policy, filenames, checks and counts, but never copies an offending cell value. A report
+with known Plotly HTML normally finishes as `passed_with_warnings`; this is an explicit limitation, not a failed
+privacy gate.
+
+All project-controlled CSV exports pass strings through `spreadsheet_safe_value()`. Values beginning with spreadsheet
+formula operators are prefixed with an apostrophe, while ordinary strings and negative numeric values are preserved.
+This protects reviewers who open topic names or editable review tables in Excel or Google Sheets.
+
+The audit is a release safeguard, not a general PII detector. Topic labels and keywords can still contain semantic
+personal information learned from source text. Reports intended for external sharing therefore require manual review,
+access control on the Drive directory, and an appropriate retention policy.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;
