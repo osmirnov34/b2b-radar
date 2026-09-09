@@ -91,7 +91,9 @@ Colab. It performs guarded Drive acquisition, complete input validation, dry-run
 the operational checklist is in [`docs/colab-ml.md`](docs/colab-ml.md).
 Live stage progress is documented in [`docs/ml-progress.md`](docs/ml-progress.md). Analyze a persisted run without
 changing its checkpoints in [`notebooks/02_colab_results_analysis.ipynb`](notebooks/02_colab_results_analysis.ipynb);
-the reporting contract is documented in [`docs/ml-results-analysis.md`](docs/ml-results-analysis.md).
+the reporting contract is documented in [`docs/ml-results-analysis.md`](docs/ml-results-analysis.md). The same notebook
+can create one portable interactive HTML report described in
+[`docs/interactive-ml-report.md`](docs/interactive-ml-report.md).
 Perform checksum-bound manual evaluation in
 [`notebooks/04_colab_manual_evaluation.ipynb`](notebooks/04_colab_manual_evaluation.ipynb); its restricted-data workflow
 is documented in [`docs/manual-evaluation.md`](docs/manual-evaluation.md). Generate a reproducibility record for the same

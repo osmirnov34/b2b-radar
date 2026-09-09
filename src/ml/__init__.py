@@ -125,6 +125,11 @@ from src.ml.inspection import (
     detect_dataset_format,
     inspect_comments_jsonl,
 )
+from src.ml.interactive_report import (
+    InteractiveReportConfig,
+    InteractiveReportManifest,
+    write_interactive_report,
+)
 from src.ml.manual_review import (
     ManualAnnotationManifest,
     ManualReviewBundle,
@@ -357,6 +362,8 @@ __all__ = [
     "HashedGroupCount",
     "HnswCandidateIndex",
     "InspectionError",
+    "InteractiveReportConfig",
+    "InteractiveReportManifest",
     "ManifestEvidence",
     "ManualAnnotation",
     "ManualAnnotationManifest",
@@ -488,6 +495,7 @@ __all__ = [
     "write_eda_reports",
     "write_experiment_passport",
     "write_inspection_reports",
+    "write_interactive_report",
     "write_problem_priority_report",
     "write_problem_signal_report",
     "write_split_markdown",
