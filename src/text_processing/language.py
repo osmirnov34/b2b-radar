@@ -40,7 +40,7 @@ def is_probably_russian(*parts: str | None, min_chars: int = _MIN_CHARS_FOR_DETE
     text = " ".join(part.strip() for part in parts if part).strip()
     if len(text) < min_chars:
         return True
-    return _detector().detect_language_of(text) == Language.RUSSIAN
+    return bool(_detector().detect_language_of(text) == Language.RUSSIAN)
 
 
 def detect_language(text: str, *, min_chars: int = _MIN_CHARS_FOR_DETECTION) -> str:

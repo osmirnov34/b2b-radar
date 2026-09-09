@@ -92,6 +92,10 @@ the operational checklist is in [`docs/colab-ml.md`](docs/colab-ml.md).
 Live stage progress is documented in [`docs/ml-progress.md`](docs/ml-progress.md). Analyze a persisted run without
 changing its checkpoints in [`notebooks/02_colab_results_analysis.ipynb`](notebooks/02_colab_results_analysis.ipynb);
 the reporting contract is documented in [`docs/ml-results-analysis.md`](docs/ml-results-analysis.md).
+Perform checksum-bound manual evaluation in
+[`notebooks/04_colab_manual_evaluation.ipynb`](notebooks/04_colab_manual_evaluation.ipynb); its restricted-data workflow
+is documented in [`docs/manual-evaluation.md`](docs/manual-evaluation.md). Generate a reproducibility record for the same
+run using the experiment-passport contract in [`docs/experiment-passport.md`](docs/experiment-passport.md).
 ANN-based semantic deduplication is documented in
 [`docs/semantic-deduplication.md`](docs/semantic-deduplication.md).
 The complete resumable pipeline, manual evaluation gate, atomic ML snapshot publication, rollback, retention policy,
