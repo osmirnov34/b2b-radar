@@ -75,6 +75,11 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "problem_candidate is a manual-review queue, not a verified problem class" in source
     assert "write_problem_signal_report(" in source
     assert "Topic size and transparent problem-signal share" in source
+    assert "ProblemPriorityConfig" in source
+    assert "rank_problem_topics(problem_assessments, config=problem_priority_config)" in source
+    assert "Priority is relative within this run; it is not severity, confidence, or business impact" in source
+    assert "Problem review priority: signal volume and video breadth" in source
+    assert "write_problem_priority_report(" in source
     assert 'hyperlinks="html"' in source
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source

@@ -31,6 +31,7 @@ from src.ml.reporting import (
     ClusterCard,
     DataScope,
     ProblemAssessmentStatus,
+    ProblemPriorityConfig,
     ProblemSignalConfig,
     ReassignmentStatus,
     ReportManifest,
@@ -43,10 +44,12 @@ from src.ml.reporting import (
     explain_assignment,
     get_cluster_card,
     processing_flow,
+    rank_problem_topics,
     representative_comments,
     stratified_plot_indices,
     topic_summary_rows,
     write_analysis_tables,
+    write_problem_priority_report,
     write_problem_signal_report,
 )
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
@@ -826,3 +829,79 @@ def test_problem_signal_assessment_rejects_tampered_corpus_and_invalid_policy(tm
             problem_candidate_minimum_share=0.1,
             topic_only_maximum_share=0.1,
         )
+
+
+def test_problem_priority_is_relative_explainable_and_stably_ranked(tmp_path: Path) -> None:
+    assessments = assess_topic_problem_signals(
+        _problem_artifacts(tmp_path),
+        config=ProblemSignalConfig(
+            minimum_signal_records=2,
+            problem_candidate_minimum_share=0.5,
+            topic_only_maximum_share=0.1,
+        ),
+    )
+    base = assessments[0]
+    lower = base.model_copy(
+        update={
+            "topic_id": 1,
+            "topic_name": "Smaller signal",
+            "signal_records": 1,
+            "signal_share": 1 / 3,
+            "status": ProblemAssessmentStatus.UNCERTAIN,
+        },
+    )
+    topic_only = base.model_copy(
+        update={
+            "topic_id": 2,
+            "topic_name": "Ordinary topic",
+            "signal_records": 0,
+            "signal_share": 0.0,
+            "signal_videos": 0,
+            "signal_video_share": 0.0,
+            "status": ProblemAssessmentStatus.TOPIC_ONLY,
+        },
+    )
+
+    priorities = rank_problem_topics([lower, topic_only, base])
+
+    assert [priority.topic_id for priority in priorities] == [0, 1]
+    assert [priority.rank for priority in priorities] == [1, 2]
+    assert priorities[0].priority_score > priorities[1].priority_score
+    assert priorities[0].signal_volume_component == 1
+    assert priorities[0].topic_scale_component == 1
+    assert "not verified severity" in priorities[0].interpretation
+
+
+def test_problem_priority_policy_and_aggregate_validation(tmp_path: Path) -> None:
+    assessment = assess_topic_problem_signals(_problem_artifacts(tmp_path))[0]
+
+    assert rank_problem_topics(
+        [assessment],
+        config=ProblemPriorityConfig(include_uncertain=False),
+    ) == []
+    with pytest.raises(ValueError, match=r"sum to 1\.0"):
+        ProblemPriorityConfig(signal_share_weight=0.5)
+    with pytest.raises(ValueError, match="duplicate topic IDs"):
+        rank_problem_topics([assessment, assessment])
+    invalid = assessment.model_copy(update={"signal_records": assessment.records + 1})
+    with pytest.raises(ValueError, match="more signal rows"):
+        rank_problem_topics([invalid])
+
+
+def test_problem_priority_report_is_checksum_bound_private_free_and_outside_run(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    output = tmp_path / "visualizations" / artifacts.run_id
+
+    manifest = write_problem_priority_report(artifacts, output)
+
+    report_text = (output / "problem-priorities.jsonl").read_text(encoding="utf-8")
+    assert manifest.ranked_topics == 1
+    assert manifest.private_text_included is False
+    assert len(manifest.assessments_sha256) == 64
+    assert manifest.signal_config == ProblemSignalConfig()
+    assert "Есть проблема" not in report_text
+    assert "private-author" not in report_text
+    with pytest.raises(FileExistsError, match="already exists"):
+        write_problem_priority_report(artifacts, output)
+    with pytest.raises(ValueError, match="outside"):
+        write_problem_priority_report(artifacts, artifacts.run_dir / "report")

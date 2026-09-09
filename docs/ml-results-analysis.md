@@ -127,6 +127,31 @@ Their manifest binds the result to the pipeline, corpus, and final-label checksu
 threshold policy. Raw text and author identity are not written; examples remain available only through the existing
 private-text-gated review functions.
 
+## Problem review priority
+
+`rank_problem_topics()` orders `problem_candidate` and, by default, `uncertain` topics for manual investigation.
+`topic_only` clusters are excluded. The score is relative to the assessment set from one run and is composed from
+four visible factors:
+
+- 40% marker prevalence within the topic;
+- 25% logarithmically normalized number of retained signal rows;
+- 25% share of the topic's videos containing at least one signal row;
+- 10% logarithmically normalized topic size.
+
+Logarithmic normalization reduces domination by the largest topic while preserving evidence volume. Prevalence and
+the minimum-count gate reduce the opposite failure mode, where one marked row in a tiny topic appears overwhelmingly
+important. Weights and inclusion of `uncertain` topics are configurable through `ProblemPriorityConfig` and validated
+before scoring.
+
+The priority table exposes the final score and every unweighted component, and the companion chart compares signal
+volume with video breadth. Equal scores are ordered by topic ID, making repeated reports deterministic. This number
+is not severity, assignment confidence, factual validity, financial impact, urgency, or a substitute for manual
+review; those dimensions require separate evidence and policy.
+
+With `SAVE_REPORT=True`, the aggregate outputs are `problem-priorities.jsonl` and
+`problem-priorities-manifest.json`. The manifest records the exact weights and the checksum of the source assessments.
+It never contains source comments or author identities.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

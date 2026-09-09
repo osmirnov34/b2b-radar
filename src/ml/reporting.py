@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
 _MATRIX_DIMENSIONS = 2
 _MINIMUM_PLOT_DIMENSIONS = 2
+_WEIGHT_TOLERANCE = 1e-9
 _YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 _SIGNAL_SEPARATOR = re.compile(r"[^\w']+", flags=re.UNICODE)
 
@@ -297,6 +299,65 @@ class ProblemSignalReportManifest(_ReportModel):
     assessments_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     topics: int = Field(ge=0)
     statuses: dict[ProblemAssessmentStatus, int]
+    private_text_included: bool = False
+    created_at: datetime
+
+
+class ProblemPriorityConfig(_ReportModel):
+    """Weight auditable aggregate factors used for manual-review priority."""
+
+    schema_version: int = 1
+    signal_share_weight: float = Field(default=0.4, ge=0, le=1)
+    signal_volume_weight: float = Field(default=0.25, ge=0, le=1)
+    signal_video_share_weight: float = Field(default=0.25, ge=0, le=1)
+    topic_scale_weight: float = Field(default=0.1, ge=0, le=1)
+    include_uncertain: bool = True
+
+    @model_validator(mode="after")
+    def validate_weights(self) -> ProblemPriorityConfig:
+        total = (
+            self.signal_share_weight
+            + self.signal_volume_weight
+            + self.signal_video_share_weight
+            + self.topic_scale_weight
+        )
+        if abs(total - 1.0) > _WEIGHT_TOLERANCE:
+            msg = f"problem-priority weights must sum to 1.0, got {total}"
+            raise ValueError(msg)
+        return self
+
+
+class ProblemPriority(_ReportModel):
+    """Explain one topic's relative position in the manual-review queue."""
+
+    rank: int = Field(ge=1)
+    topic_id: int = Field(ge=0)
+    topic_name: str
+    status: ProblemAssessmentStatus
+    priority_score: float = Field(ge=0, le=100)
+    signal_share_component: float = Field(ge=0, le=1)
+    signal_volume_component: float = Field(ge=0, le=1)
+    signal_video_share_component: float = Field(ge=0, le=1)
+    topic_scale_component: float = Field(ge=0, le=1)
+    records: int = Field(ge=1)
+    signal_records: int = Field(ge=0)
+    unique_videos: int = Field(ge=0)
+    signal_videos: int = Field(ge=0)
+    interpretation: str = "relative manual-review priority; not verified severity or business impact"
+
+
+class ProblemPriorityReportManifest(_ReportModel):
+    """Bind a priority report to aggregate problem evidence and source artifacts."""
+
+    report_schema_version: int = 1
+    run_id: str
+    pipeline_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    assessments_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signal_config: ProblemSignalConfig
+    config: ProblemPriorityConfig
+    priorities_path: str
+    priorities_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ranked_topics: int = Field(ge=0)
     private_text_included: bool = False
     created_at: datetime
 
@@ -1547,6 +1608,138 @@ def write_problem_signal_report(
         assessments_sha256=_sha256_file(assessments_path),
         topics=len(assessments),
         statuses=statuses,
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest
+
+
+def _assessments_sha256(assessments: list[TopicProblemAssessment]) -> str:
+    digest = hashlib.sha256()
+    for assessment in assessments:
+        digest.update(f"{assessment.model_dump_json()}\n".encode())
+    return digest.hexdigest()
+
+
+def rank_problem_topics(
+    assessments: list[TopicProblemAssessment],
+    *,
+    config: ProblemPriorityConfig | None = None,
+) -> list[ProblemPriority]:
+    """Rank problem candidates for review with a transparent relative score.
+
+    The score is comparable only within this supplied assessment set. It combines
+    marker prevalence, logarithmic signal volume, video breadth, and logarithmic
+    topic scale. It is not a severity, confidence, or business-impact estimate.
+
+    Args:
+        assessments: Aggregate topic assessments from one verified run.
+        config: Optional factor weights and uncertain-topic inclusion policy.
+
+    Returns:
+        Eligible topics sorted by descending score with stable one-based ranks.
+
+    Raises:
+        ValueError: If topic IDs repeat or aggregate counts are inconsistent.
+
+    """
+    active_config = config or ProblemPriorityConfig()
+    topic_ids = [assessment.topic_id for assessment in assessments]
+    if len(set(topic_ids)) != len(topic_ids):
+        msg = "problem-priority assessments contain duplicate topic IDs"
+        raise ValueError(msg)
+    for assessment in assessments:
+        if assessment.signal_records > assessment.records:
+            msg = f"topic {assessment.topic_id} has more signal rows than records"
+            raise ValueError(msg)
+        if assessment.signal_videos > assessment.unique_videos:
+            msg = f"topic {assessment.topic_id} has more signal videos than videos"
+            raise ValueError(msg)
+    eligible = [
+        assessment
+        for assessment in assessments
+        if assessment.status == ProblemAssessmentStatus.PROBLEM_CANDIDATE
+        or (active_config.include_uncertain and assessment.status == ProblemAssessmentStatus.UNCERTAIN)
+    ]
+    if not eligible:
+        return []
+    maximum_signal_records = max(assessment.signal_records for assessment in eligible)
+    maximum_records = max(assessment.records for assessment in eligible)
+    scored: list[tuple[float, TopicProblemAssessment, float, float]] = []
+    for assessment in eligible:
+        volume = (
+            math.log1p(assessment.signal_records) / math.log1p(maximum_signal_records)
+            if maximum_signal_records
+            else 0.0
+        )
+        scale = math.log1p(assessment.records) / math.log1p(maximum_records)
+        score = 100 * (
+            active_config.signal_share_weight * assessment.signal_share
+            + active_config.signal_volume_weight * volume
+            + active_config.signal_video_share_weight * assessment.signal_video_share
+            + active_config.topic_scale_weight * scale
+        )
+        scored.append((score, assessment, volume, scale))
+    scored.sort(key=lambda item: (-item[0], item[1].topic_id))
+    return [
+        ProblemPriority(
+            rank=rank,
+            topic_id=assessment.topic_id,
+            topic_name=assessment.topic_name,
+            status=assessment.status,
+            priority_score=score,
+            signal_share_component=assessment.signal_share,
+            signal_volume_component=volume,
+            signal_video_share_component=assessment.signal_video_share,
+            topic_scale_component=scale,
+            records=assessment.records,
+            signal_records=assessment.signal_records,
+            unique_videos=assessment.unique_videos,
+            signal_videos=assessment.signal_videos,
+        )
+        for rank, (score, assessment, volume, scale) in enumerate(scored, start=1)
+    ]
+
+
+def write_problem_priority_report(
+    artifacts: AnalysisArtifacts,
+    output_dir: Path,
+    *,
+    signal_config: ProblemSignalConfig | None = None,
+    priority_config: ProblemPriorityConfig | None = None,
+    overwrite: bool = False,
+) -> ProblemPriorityReportManifest:
+    """Write an aggregate checksum-bound manual-review priority report."""
+    target = output_dir.resolve()
+    if target.is_relative_to(artifacts.run_dir.resolve()):
+        msg = "problem-priority reports must be stored outside the ML run directory"
+        raise ValueError(msg)
+    active_signal_config = signal_config or ProblemSignalConfig()
+    assessments = assess_topic_problem_signals(artifacts, config=active_signal_config)
+    active_config = priority_config or ProblemPriorityConfig()
+    priorities = rank_problem_topics(assessments, config=active_config)
+    priorities_path = target / "problem-priorities.jsonl"
+    manifest_path = target / "problem-priorities-manifest.json"
+    if not overwrite and (priorities_path.exists() or manifest_path.exists()):
+        msg = f"problem-priority report already exists: {target}"
+        raise FileExistsError(msg)
+    target.mkdir(parents=True, exist_ok=True)
+    priorities_tmp = priorities_path.with_name(f".{priorities_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with priorities_tmp.open("w", encoding="utf-8") as target_file:
+        for priority in priorities:
+            target_file.write(f"{priority.model_dump_json()}\n")
+    priorities_tmp.replace(priorities_path)
+    manifest = ProblemPriorityReportManifest(
+        run_id=artifacts.run_id,
+        pipeline_manifest_sha256=artifacts.pipeline_manifest_sha256,
+        assessments_sha256=_assessments_sha256(assessments),
+        signal_config=active_signal_config,
+        config=active_config,
+        priorities_path=str(priorities_path),
+        priorities_sha256=_sha256_file(priorities_path),
+        ranked_topics=len(priorities),
         created_at=datetime.now(UTC),
     )
     manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
