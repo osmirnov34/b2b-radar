@@ -178,6 +178,39 @@ With `SAVE_REPORT=True`, aggregate diagnostics are written to `video-concentrati
 manifest. Video IDs, texts, and author identities are not exported. The notebook displays both scopes side by side
 and adds concentrated topics to a manual-review queue.
 
+## Temporal analysis
+
+`analyze_topic_temporal_trends()` builds gap-filled calendar-month series in UTC for every final topic and its
+problem-signal subset. It reports date coverage, missing-date rows, completed months, the latest and previous month,
+relative change, earlier-month baseline, and peak month. Months without retained rows between the first and last
+observed completed month remain explicit zeroes instead of disappearing from the chart.
+
+The current UTC month is excluded by default because partial-month counts are not comparable with complete calendar
+months. `analyzed_at` is fixed once per notebook execution and persisted in the report manifest, so the exclusion is
+auditable. Naive timestamps are interpreted as UTC; timestamps later than `analyzed_at` block the report as invalid
+temporal evidence.
+
+Statuses are evaluated separately for overall topic activity and problem-signal activity:
+
+- `stable`: last-month change remains inside the configured band;
+- `growing` or `declining`: the last two months meet the minimum-volume gate and cross the relative-change threshold;
+- `spike`: the latest month is sufficiently large relative to the prior completed-month baseline;
+- `insufficient_data`: date coverage, history, or comparison volume is inadequate.
+
+Defaults require 90% date coverage, three completed months, and five rows in the previous comparison month. The
+growth threshold is 25%; a spike requires twice a prior mean of at least five rows. A zero previous month produces no
+infinite growth percentage. It can become `spike` only when the longer baseline independently passes its evidence
+gate; otherwise the result remains `insufficient_data`.
+
+These statuses describe activity in the collected dataset—not causal demand, incident severity, market growth, or
+population prevalence. Changes may reflect video publication schedules, query composition, collection coverage, or
+source concentration. They therefore feed a manual-review queue and should be interpreted alongside the one-video
+diagnostic.
+
+With `SAVE_REPORT=True`, `topic-temporal-trends.jsonl` contains monthly aggregates only and
+`topic-temporal-trends-manifest.json` binds them to the pipeline, corpus, final labels, signal policy, trend policy,
+and analysis time. Raw text, authors, video IDs, and exact publication timestamps are not exported.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

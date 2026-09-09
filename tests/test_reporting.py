@@ -2,6 +2,7 @@ import hashlib
 import inspect
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -36,9 +37,12 @@ from src.ml.reporting import (
     ReassignmentStatus,
     ReportManifest,
     RepresentativeComment,
+    TemporalAnalysisConfig,
+    TemporalTrendStatus,
     TopicSummaryRow,
     VideoConcentrationConfig,
     VideoConcentrationStatus,
+    analyze_topic_temporal_trends,
     assess_topic_problem_signals,
     assess_video_concentration,
     assignment_review_comments,
@@ -54,6 +58,7 @@ from src.ml.reporting import (
     write_analysis_tables,
     write_problem_priority_report,
     write_problem_signal_report,
+    write_temporal_analysis_report,
     write_video_concentration_report,
 )
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
@@ -449,6 +454,33 @@ def _problem_artifacts(tmp_path: Path, texts: list[str] | None = None) -> Analys
     )
     corpus = CorpusManifest.model_construct(corpus_sha256=_sha256(artifacts.corpus_path))
     return replace(artifacts, corpus=corpus)
+
+
+def _temporal_artifacts(
+    tmp_path: Path,
+    months_and_texts: list[tuple[str | None, str]],
+) -> AnalysisArtifacts:
+    artifacts = _representative_artifacts(tmp_path)
+    templates = [json.loads(line) for line in artifacts.corpus_path.read_text(encoding="utf-8").splitlines()]
+    rows = []
+    for index, (published_at, text) in enumerate(months_and_texts):
+        row = dict(templates[index % len(templates)])
+        row["record_id"] = f"temporal:{index}"
+        row["published_at"] = f"{published_at}-15T12:00:00Z" if published_at else None
+        row["text"] = text
+        row["clean_text"] = text
+        rows.append(row)
+    artifacts.corpus_path.write_text(
+        "".join(f"{json.dumps(row, ensure_ascii=False)}\n" for row in rows),
+        encoding="utf-8",
+    )
+    return replace(
+        artifacts,
+        labels=np.zeros(len(rows), dtype=np.int64),
+        confidence=np.ones(len(rows), dtype=np.float32),
+        corpus=CorpusManifest.model_construct(corpus_sha256=_sha256(artifacts.corpus_path)),
+        summary=artifacts.summary.model_copy(update={"records": len(rows), "outliers": 0}),
+    )
 
 
 def test_stratified_plot_indices_are_deterministic_and_keep_every_label() -> None:
@@ -975,3 +1007,103 @@ def test_video_concentration_report_is_checksum_bound_private_free_and_outside_r
         write_video_concentration_report(artifacts, output)
     with pytest.raises(ValueError, match="outside"):
         write_video_concentration_report(artifacts, artifacts.run_dir / "report")
+
+
+def test_temporal_analysis_tracks_topic_and_problem_signal_series_separately(tmp_path: Path) -> None:
+    artifacts = _temporal_artifacts(
+        tmp_path,
+        [
+            ("2024-01", "Проблема оплаты"),
+            ("2024-02", "Ошибка оплаты"),
+            ("2024-03", "Обычная тема"),
+        ],
+    )
+    config = TemporalAnalysisConfig(
+        minimum_records_per_comparison_month=1,
+        minimum_spike_baseline=1,
+    )
+
+    trend = analyze_topic_temporal_trends(
+        artifacts,
+        config=config,
+        analyzed_at=datetime(2024, 4, 10, tzinfo=UTC),
+    )[0]
+
+    assert trend.date_coverage == 1
+    assert trend.completed_months == 3
+    assert [point.month for point in trend.monthly_activity] == ["2024-01", "2024-02", "2024-03"]
+    assert trend.status == TemporalTrendStatus.STABLE
+    assert trend.relative_change == 0
+    assert trend.problem_signal_status == TemporalTrendStatus.DECLINING
+    assert trend.problem_signal_relative_change == -1
+    assert trend.requires_manual_review is True
+
+
+def test_temporal_analysis_detects_spike_and_fills_missing_calendar_months(tmp_path: Path) -> None:
+    data = [
+        *(("2024-01", "Проблема") for _ in range(2)),
+        *(("2024-03", "Проблема") for _ in range(6)),
+    ]
+    artifacts = _temporal_artifacts(tmp_path, data)
+    config = TemporalAnalysisConfig(
+        minimum_records_per_comparison_month=1,
+        minimum_spike_baseline=0.5,
+        spike_ratio=2,
+    )
+
+    trend = analyze_topic_temporal_trends(
+        artifacts,
+        config=config,
+        analyzed_at=datetime(2024, 4, 1, tzinfo=UTC),
+    )[0]
+
+    assert [point.records for point in trend.monthly_activity] == [2, 0, 6]
+    assert trend.previous_month_records == 0
+    assert trend.relative_change is None
+    assert trend.baseline_mean_records == 1
+    assert trend.status == TemporalTrendStatus.SPIKE
+    assert trend.peak_month == "2024-03"
+
+
+def test_temporal_analysis_excludes_current_month_and_requires_date_coverage(tmp_path: Path) -> None:
+    artifacts = _temporal_artifacts(
+        tmp_path,
+        [("2024-01", "Обычная тема"), ("2024-02", "Обычная тема"), ("2024-04", "Обычная тема"), (None, "Проблема")],
+    )
+
+    trend = analyze_topic_temporal_trends(
+        artifacts,
+        analyzed_at=datetime(2024, 4, 20, tzinfo=UTC),
+    )[0]
+
+    assert trend.excluded_current_month == "2024-04"
+    assert trend.date_coverage == 0.75
+    assert trend.status == TemporalTrendStatus.INSUFFICIENT_DATA
+    assert all(point.month != "2024-04" for point in trend.monthly_activity)
+
+
+def test_temporal_report_is_checksum_bound_private_free_and_rejects_future_dates(tmp_path: Path) -> None:
+    artifacts = _temporal_artifacts(
+        tmp_path,
+        [("2024-01", "Проблема"), ("2024-02", "Обычная тема"), ("2024-03", "Обычная тема")],
+    )
+    output = tmp_path / "visualizations" / artifacts.run_id
+    analyzed_at = datetime(2024, 4, 1, tzinfo=UTC)
+
+    manifest = write_temporal_analysis_report(artifacts, output, analyzed_at=analyzed_at)
+
+    report_text = (output / "topic-temporal-trends.jsonl").read_text(encoding="utf-8")
+    assert manifest.topics == 1
+    assert manifest.analyzed_at == analyzed_at
+    assert manifest.private_text_included is False
+    assert "Проблема" not in report_text
+    assert "private-author" not in report_text
+    with pytest.raises(FileExistsError, match="already exists"):
+        write_temporal_analysis_report(artifacts, output, analyzed_at=analyzed_at)
+    with pytest.raises(ValueError, match="outside"):
+        write_temporal_analysis_report(artifacts, artifacts.run_dir / "report", analyzed_at=analyzed_at)
+    with pytest.raises(ValueError, match="later than temporal analysis"):
+        analyze_topic_temporal_trends(
+            artifacts,
+            analyzed_at=datetime(2024, 2, 1, tzinfo=UTC),
+        )

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 _MATRIX_DIMENSIONS = 2
 _MINIMUM_PLOT_DIMENSIONS = 2
+_DECEMBER = 12
 _WEIGHT_TOLERANCE = 1e-9
 _YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
 _SIGNAL_SEPARATOR = re.compile(r"[^\w']+", flags=re.UNICODE)
@@ -433,6 +434,91 @@ class VideoConcentrationReportManifest(_ReportModel):
     created_at: datetime
 
 
+class TemporalTrendStatus(StrEnum):
+    """Describe an aggregate monthly pattern without claiming causal change."""
+
+    STABLE = "stable"
+    GROWING = "growing"
+    DECLINING = "declining"
+    SPIKE = "spike"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
+class TemporalAnalysisConfig(_ReportModel):
+    """Configure date coverage, evidence, change, and spike gates."""
+
+    schema_version: int = 1
+    minimum_date_coverage: float = Field(default=0.9, gt=0, le=1)
+    minimum_completed_months: int = Field(default=3, ge=2)
+    minimum_records_per_comparison_month: int = Field(default=5, ge=1)
+    relative_change_threshold: float = Field(default=0.25, gt=0, le=1)
+    spike_ratio: float = Field(default=2.0, gt=1)
+    minimum_spike_baseline: float = Field(default=5.0, gt=0)
+    exclude_current_month: bool = True
+
+
+class TopicMonthlyActivity(_ReportModel):
+    """Contain aggregate retained-row activity for one UTC calendar month."""
+
+    month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    records: int = Field(ge=0)
+    problem_signal_records: int = Field(ge=0)
+    problem_signal_share: float = Field(ge=0, le=1)
+
+
+class TopicTemporalTrend(_ReportModel):
+    """Explain one topic's auditable monthly trend classification."""
+
+    topic_id: int = Field(ge=0)
+    topic_name: str
+    total_records: int = Field(ge=1)
+    dated_records: int = Field(ge=0)
+    missing_date_records: int = Field(ge=0)
+    date_coverage: float = Field(ge=0, le=1)
+    completed_months: int = Field(ge=0)
+    excluded_current_month: str | None = None
+    first_month: str | None = None
+    latest_month: str | None = None
+    previous_month_records: int | None = Field(default=None, ge=0)
+    latest_month_records: int | None = Field(default=None, ge=0)
+    relative_change: float | None = None
+    baseline_mean_records: float | None = Field(default=None, ge=0)
+    peak_month: str | None = None
+    peak_records: int = Field(ge=0)
+    status: TemporalTrendStatus
+    problem_signal_records: int = Field(ge=0)
+    dated_problem_signal_records: int = Field(ge=0)
+    problem_signal_date_coverage: float = Field(ge=0, le=1)
+    previous_month_problem_signal_records: int | None = Field(default=None, ge=0)
+    latest_month_problem_signal_records: int | None = Field(default=None, ge=0)
+    problem_signal_relative_change: float | None = None
+    problem_signal_baseline_mean_records: float | None = Field(default=None, ge=0)
+    problem_signal_peak_month: str | None = None
+    problem_signal_peak_records: int = Field(ge=0)
+    problem_signal_status: TemporalTrendStatus
+    requires_manual_review: bool
+    monthly_activity: list[TopicMonthlyActivity]
+    interpretation: str = "descriptive UTC-month activity; not causal demand or incident severity"
+
+
+class TemporalAnalysisReportManifest(_ReportModel):
+    """Bind aggregate monthly trend diagnostics to verified source artifacts."""
+
+    report_schema_version: int = 1
+    run_id: str
+    pipeline_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    corpus_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    labels_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signal_config: ProblemSignalConfig
+    config: TemporalAnalysisConfig
+    analyzed_at: datetime
+    trends_path: str
+    trends_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    topics: int = Field(ge=0)
+    private_text_included: bool = False
+    created_at: datetime
+
+
 class ProcessingFlowStep(_ReportModel):
     stage: str
     records: int = Field(ge=0)
@@ -584,6 +670,27 @@ class _VideoConcentrationState:
     videos: dict[str, int] = field(default_factory=dict)
     signal_records: int = 0
     signal_videos: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class _TemporalState:
+    records: int = 0
+    missing_dates: int = 0
+    signal_records: int = 0
+    missing_signal_dates: int = 0
+    months: dict[str, int] = field(default_factory=dict)
+    signal_months: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _TemporalSeriesResult:
+    previous_records: int | None
+    latest_records: int | None
+    relative_change: float | None
+    baseline_mean: float | None
+    peak_month: str | None
+    peak_records: int
+    status: TemporalTrendStatus
 
 
 def _sha256_file(path: Path) -> str:
@@ -2006,6 +2113,268 @@ def write_video_concentration_report(
         diagnostics_path=str(diagnostics_path),
         diagnostics_sha256=_sha256_file(diagnostics_path),
         topics=len(diagnostics),
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _month_key(value: datetime) -> str:
+    return _utc_datetime(value).strftime("%Y-%m")
+
+
+def _month_sequence(first: str, last: str) -> list[str]:
+    year, month = (int(part) for part in first.split("-"))
+    last_year, last_month = (int(part) for part in last.split("-"))
+    result = []
+    while (year, month) <= (last_year, last_month):
+        result.append(f"{year:04d}-{month:02d}")
+        year, month = (year + 1, 1) if month == _DECEMBER else (year, month + 1)
+    return result
+
+
+def _temporal_series_result(
+    months: list[str],
+    counts: dict[str, int],
+    *,
+    date_coverage: float,
+    config: TemporalAnalysisConfig,
+) -> _TemporalSeriesResult:
+    if not months:
+        return _TemporalSeriesResult(None, None, None, None, None, 0, TemporalTrendStatus.INSUFFICIENT_DATA)
+    values = [counts.get(month, 0) for month in months]
+    peak_records = max(values)
+    peak_month = months[values.index(peak_records)]
+    latest = values[-1]
+    previous = values[-2] if len(values) > 1 else None
+    baseline = sum(values[:-1]) / len(values[:-1]) if len(values) > 1 else None
+    relative_change = (latest - previous) / previous if previous else None
+    status = TemporalTrendStatus.INSUFFICIENT_DATA
+    enough_history = len(months) >= config.minimum_completed_months
+    if date_coverage >= config.minimum_date_coverage and enough_history:
+        is_spike = (
+            baseline is not None
+            and baseline >= config.minimum_spike_baseline
+            and latest >= baseline * config.spike_ratio
+        )
+        if is_spike:
+            status = TemporalTrendStatus.SPIKE
+        elif previous is not None and previous >= config.minimum_records_per_comparison_month:
+            if relative_change is not None and relative_change >= config.relative_change_threshold:
+                status = TemporalTrendStatus.GROWING
+            elif relative_change is not None and relative_change <= -config.relative_change_threshold:
+                status = TemporalTrendStatus.DECLINING
+            else:
+                status = TemporalTrendStatus.STABLE
+    return _TemporalSeriesResult(previous, latest, relative_change, baseline, peak_month, peak_records, status)
+
+
+def _accumulate_temporal_record(
+    state: _TemporalState,
+    record: CorpusRecord,
+    signal_config: ProblemSignalConfig,
+    analyzed_at: datetime,
+) -> None:
+    state.records += 1
+    is_signal = bool(_matched_problem_signals(record.clean_text, signal_config))
+    if is_signal:
+        state.signal_records += 1
+    if record.published_at is None:
+        state.missing_dates += 1
+        if is_signal:
+            state.missing_signal_dates += 1
+        return
+    published_at = _utc_datetime(record.published_at)
+    if published_at > analyzed_at:
+        msg = f"published_at is later than temporal analysis time: {published_at.isoformat()}"
+        raise ValueError(msg)
+    month = _month_key(published_at)
+    state.months[month] = state.months.get(month, 0) + 1
+    if is_signal:
+        state.signal_months[month] = state.signal_months.get(month, 0) + 1
+
+
+def _topic_temporal_trend(
+    topic: TopicRepresentation,
+    state: _TemporalState,
+    config: TemporalAnalysisConfig,
+    current_month: str,
+) -> TopicTemporalTrend:
+    if state.records == 0:
+        msg = f"topic {topic.topic_id} has no final assigned records"
+        raise ValueError(msg)
+    eligible_keys = sorted(
+        month
+        for month in state.months
+        if not (config.exclude_current_month and month == current_month)
+    )
+    months = _month_sequence(eligible_keys[0], eligible_keys[-1]) if eligible_keys else []
+    dated_records = state.records - state.missing_dates
+    dated_signals = state.signal_records - state.missing_signal_dates
+    topic_series = _temporal_series_result(
+        months,
+        state.months,
+        date_coverage=dated_records / state.records,
+        config=config,
+    )
+    signal_series = _temporal_series_result(
+        months,
+        state.signal_months,
+        date_coverage=dated_signals / state.signal_records if state.signal_records else 0,
+        config=config,
+    )
+    monthly_activity = [
+        TopicMonthlyActivity(
+            month=month,
+            records=state.months.get(month, 0),
+            problem_signal_records=state.signal_months.get(month, 0),
+            problem_signal_share=(
+                state.signal_months.get(month, 0) / state.months[month]
+                if state.months.get(month, 0)
+                else 0
+            ),
+        )
+        for month in months
+    ]
+    noteworthy = {
+        TemporalTrendStatus.GROWING,
+        TemporalTrendStatus.DECLINING,
+        TemporalTrendStatus.SPIKE,
+    }
+    return TopicTemporalTrend(
+        topic_id=topic.topic_id,
+        topic_name=topic.name,
+        total_records=state.records,
+        dated_records=dated_records,
+        missing_date_records=state.missing_dates,
+        date_coverage=dated_records / state.records,
+        completed_months=len(months),
+        excluded_current_month=(
+            current_month if config.exclude_current_month and current_month in state.months else None
+        ),
+        first_month=months[0] if months else None,
+        latest_month=months[-1] if months else None,
+        previous_month_records=topic_series.previous_records,
+        latest_month_records=topic_series.latest_records,
+        relative_change=topic_series.relative_change,
+        baseline_mean_records=topic_series.baseline_mean,
+        peak_month=topic_series.peak_month,
+        peak_records=topic_series.peak_records,
+        status=topic_series.status,
+        problem_signal_records=state.signal_records,
+        dated_problem_signal_records=dated_signals,
+        problem_signal_date_coverage=dated_signals / state.signal_records if state.signal_records else 0,
+        previous_month_problem_signal_records=signal_series.previous_records,
+        latest_month_problem_signal_records=signal_series.latest_records,
+        problem_signal_relative_change=signal_series.relative_change,
+        problem_signal_baseline_mean_records=signal_series.baseline_mean,
+        problem_signal_peak_month=signal_series.peak_month,
+        problem_signal_peak_records=signal_series.peak_records,
+        problem_signal_status=signal_series.status,
+        requires_manual_review=topic_series.status in noteworthy or signal_series.status in noteworthy,
+        monthly_activity=monthly_activity,
+    )
+
+
+def analyze_topic_temporal_trends(
+    artifacts: AnalysisArtifacts,
+    *,
+    signal_config: ProblemSignalConfig | None = None,
+    config: TemporalAnalysisConfig | None = None,
+    analyzed_at: datetime | None = None,
+) -> list[TopicTemporalTrend]:
+    """Analyze checksum-verified final topics as complete UTC calendar months."""
+    active_signal_config = signal_config or ProblemSignalConfig()
+    active_config = config or TemporalAnalysisConfig()
+    active_analyzed_at = _utc_datetime(analyzed_at or datetime.now(UTC))
+    if _sha256_file(artifacts.corpus_path) != artifacts.corpus.corpus_sha256:
+        msg = "temporal-analysis corpus checksum does not match its manifest"
+        raise ValueError(msg)
+    topics = {topic.topic_id: topic for topic in artifacts.topics}
+    states = {topic_id: _TemporalState() for topic_id in topics}
+    corpus_rows = 0
+    with artifacts.corpus_path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            if corpus_rows >= len(artifacts.labels):
+                msg = "temporal-analysis corpus contains more rows than final labels"
+                raise ValueError(msg)
+            label = int(artifacts.labels[corpus_rows])
+            record = CorpusRecord.model_validate_json(line)
+            corpus_rows += 1
+            if label < 0:
+                continue
+            if label not in states:
+                msg = f"final assignment refers to unknown topic ID: {label}"
+                raise ValueError(msg)
+            _accumulate_temporal_record(states[label], record, active_signal_config, active_analyzed_at)
+    if corpus_rows != len(artifacts.labels) or corpus_rows != artifacts.summary.records:
+        msg = "temporal-analysis corpus and final labels are not row-aligned"
+        raise ValueError(msg)
+    current_month = _month_key(active_analyzed_at)
+    return [
+        _topic_temporal_trend(topic, states[topic_id], active_config, current_month)
+        for topic_id, topic in topics.items()
+    ]
+
+
+def write_temporal_analysis_report(  # noqa: PLR0913
+    artifacts: AnalysisArtifacts,
+    output_dir: Path,
+    *,
+    signal_config: ProblemSignalConfig | None = None,
+    config: TemporalAnalysisConfig | None = None,
+    analyzed_at: datetime | None = None,
+    overwrite: bool = False,
+) -> TemporalAnalysisReportManifest:
+    """Write aggregate checksum-bound monthly topic diagnostics."""
+    target = output_dir.resolve()
+    if target.is_relative_to(artifacts.run_dir.resolve()):
+        msg = "temporal-analysis reports must be stored outside the ML run directory"
+        raise ValueError(msg)
+    active_signal_config = signal_config or ProblemSignalConfig()
+    active_config = config or TemporalAnalysisConfig()
+    active_analyzed_at = _utc_datetime(analyzed_at or datetime.now(UTC))
+    trends = analyze_topic_temporal_trends(
+        artifacts,
+        signal_config=active_signal_config,
+        config=active_config,
+        analyzed_at=active_analyzed_at,
+    )
+    trends_path = target / "topic-temporal-trends.jsonl"
+    manifest_path = target / "topic-temporal-trends-manifest.json"
+    if not overwrite and (trends_path.exists() or manifest_path.exists()):
+        msg = f"temporal-analysis report already exists: {target}"
+        raise FileExistsError(msg)
+    target.mkdir(parents=True, exist_ok=True)
+    trends_tmp = trends_path.with_name(f".{trends_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with trends_tmp.open("w", encoding="utf-8") as target_file:
+        for trend in trends:
+            target_file.write(f"{trend.model_dump_json()}\n")
+    trends_tmp.replace(trends_path)
+    labels_sha256 = (
+        artifacts.reassignment.final_labels_sha256
+        if artifacts.reassignment is not None
+        else artifacts.clustering.labels_sha256
+    )
+    manifest = TemporalAnalysisReportManifest(
+        run_id=artifacts.run_id,
+        pipeline_manifest_sha256=artifacts.pipeline_manifest_sha256,
+        corpus_sha256=artifacts.corpus.corpus_sha256,
+        labels_sha256=labels_sha256,
+        signal_config=active_signal_config,
+        config=active_config,
+        analyzed_at=active_analyzed_at,
+        trends_path=str(trends_path),
+        trends_sha256=_sha256_file(trends_path),
+        topics=len(trends),
         created_at=datetime.now(UTC),
     )
     manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")

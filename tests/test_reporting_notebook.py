@@ -84,7 +84,7 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "Topic keyword similarity" in source
     assert "top_video_share" in source
     assert "Language composition by topic" in source
-    assert "Largest topic activity by month" in source
+    assert "Completed UTC-month activity: topics and problem signals" in source
     assert "manual-topic-review.csv" in source
     assert "report-manifest.json" in source
 
@@ -98,3 +98,14 @@ def test_reporting_notebook_covers_video_concentration_diagnostics() -> None:
     assert "effective_videos" in source
     assert "One-video effect: topic versus problem-signal concentration" in source
     assert "write_video_concentration_report(" in source
+
+
+def test_reporting_notebook_covers_checksum_bound_temporal_analysis() -> None:
+    source = "\n".join(_sources())
+
+    assert "TemporalAnalysisConfig" in source
+    assert "analyze_topic_temporal_trends(" in source
+    assert "temporal_analyzed_at = datetime.now(UTC)" in source
+    assert "problem_signal_relative_change" in source
+    assert "excludes the current UTC month by default" in source
+    assert "write_temporal_analysis_report(" in source
