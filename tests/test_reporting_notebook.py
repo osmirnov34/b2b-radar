@@ -87,3 +87,14 @@ def test_reporting_notebook_covers_core_quality_views() -> None:
     assert "Largest topic activity by month" in source
     assert "manual-topic-review.csv" in source
     assert "report-manifest.json" in source
+
+
+def test_reporting_notebook_covers_video_concentration_diagnostics() -> None:
+    source = "\n".join(_sources())
+
+    assert "VideoConcentrationConfig" in source
+    assert "assess_video_concentration(" in source
+    assert "top_three_video_share" in source
+    assert "effective_videos" in source
+    assert "One-video effect: topic versus problem-signal concentration" in source
+    assert "write_video_concentration_report(" in source

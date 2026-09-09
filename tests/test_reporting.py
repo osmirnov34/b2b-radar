@@ -37,7 +37,10 @@ from src.ml.reporting import (
     ReportManifest,
     RepresentativeComment,
     TopicSummaryRow,
+    VideoConcentrationConfig,
+    VideoConcentrationStatus,
     assess_topic_problem_signals,
+    assess_video_concentration,
     assignment_review_comments,
     build_cluster_cards,
     build_data_lineage,
@@ -51,6 +54,7 @@ from src.ml.reporting import (
     write_analysis_tables,
     write_problem_priority_report,
     write_problem_signal_report,
+    write_video_concentration_report,
 )
 from src.ml.semantic_deduplication import SemanticDeduplicationManifest
 from src.ml.splitting import DatasetSplitManifest, SplitName, SplitStats
@@ -905,3 +909,69 @@ def test_problem_priority_report_is_checksum_bound_private_free_and_outside_run(
         write_problem_priority_report(artifacts, output)
     with pytest.raises(ValueError, match="outside"):
         write_problem_priority_report(artifacts, artifacts.run_dir / "report")
+
+
+def test_video_concentration_separates_topic_and_problem_signal_effects(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    config = VideoConcentrationConfig(minimum_topic_records=1, minimum_signal_records=1)
+
+    diagnostic = assess_video_concentration(artifacts, config=config)[0]
+
+    assert diagnostic.topic.records == 3
+    assert diagnostic.topic.unique_videos == 2
+    assert diagnostic.topic.top_video_share == 2 / 3
+    assert diagnostic.topic.top_three_video_share == 1
+    assert diagnostic.topic.hhi == pytest.approx(5 / 9)
+    assert diagnostic.topic.effective_videos == pytest.approx(1.8)
+    assert diagnostic.topic_status == VideoConcentrationStatus.CONCENTRATED
+    assert diagnostic.problem_signals.records == 2
+    assert diagnostic.problem_signals.top_video_share == 1
+    assert diagnostic.problem_signal_status == VideoConcentrationStatus.SINGLE_VIDEO_DOMINATED
+    assert diagnostic.requires_manual_review is True
+
+
+def test_video_concentration_uses_evidence_and_source_coverage_gates(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    rows = [json.loads(line) for line in artifacts.corpus_path.read_text(encoding="utf-8").splitlines()]
+    rows[0]["video_id"] = ""
+    artifacts.corpus_path.write_text(
+        "".join(f"{json.dumps(row, ensure_ascii=False)}\n" for row in rows),
+        encoding="utf-8",
+    )
+    artifacts = replace(
+        artifacts,
+        corpus=artifacts.corpus.model_copy(update={"corpus_sha256": _sha256(artifacts.corpus_path)}),
+    )
+
+    diagnostic = assess_video_concentration(
+        artifacts,
+        config=VideoConcentrationConfig(minimum_topic_records=1, minimum_signal_records=1),
+    )[0]
+
+    assert diagnostic.topic.video_id_coverage == 2 / 3
+    assert diagnostic.topic_status == VideoConcentrationStatus.INSUFFICIENT_DATA
+    assert diagnostic.problem_signal_status == VideoConcentrationStatus.INSUFFICIENT_DATA
+    with pytest.raises(ValueError, match="single-video threshold"):
+        VideoConcentrationConfig(
+            single_video_dominated_share=0.5,
+            concentrated_top_video_share=0.5,
+        )
+
+
+def test_video_concentration_report_is_checksum_bound_private_free_and_outside_run(tmp_path: Path) -> None:
+    artifacts = _problem_artifacts(tmp_path)
+    output = tmp_path / "visualizations" / artifacts.run_id
+
+    manifest = write_video_concentration_report(artifacts, output)
+
+    report_text = (output / "video-concentration.jsonl").read_text(encoding="utf-8")
+    assert manifest.topics == 1
+    assert manifest.private_text_included is False
+    assert manifest.corpus_sha256 == artifacts.corpus.corpus_sha256
+    assert "Есть проблема" not in report_text
+    assert "video-a" not in report_text
+    assert "private-author" not in report_text
+    with pytest.raises(FileExistsError, match="already exists"):
+        write_video_concentration_report(artifacts, output)
+    with pytest.raises(ValueError, match="outside"):
+        write_video_concentration_report(artifacts, artifacts.run_dir / "report")

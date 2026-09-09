@@ -152,6 +152,32 @@ With `SAVE_REPORT=True`, the aggregate outputs are `problem-priorities.jsonl` an
 `problem-priorities-manifest.json`. The manifest records the exact weights and the checksum of the source assessments.
 It never contains source comments or author identities.
 
+## One-video effect
+
+`assess_video_concentration()` checks whether a final topic is genuinely distributed across sources or largely
+reflects one video. It evaluates the complete topic and its problem-signal subset separately. For both scopes the
+report includes known-video coverage, unique videos, largest-video share, top-three-video share, the
+Herfindahl–Hirschman concentration index (HHI), and the effective number of videos (`1 / HHI`).
+
+The diagnostic statuses are:
+
+- `distributed`: neither configured concentration threshold is reached;
+- `concentrated`: the largest-video share or HHI reaches its warning threshold;
+- `single_video_dominated`: the largest video reaches the stronger dominance threshold;
+- `insufficient_data`: there are too few retained rows or too many missing video IDs for a reliable status.
+
+Defaults require 20 topic rows, 5 problem-signal rows, and 95% known-video coverage. A largest-video share of 50% or
+HHI of 0.25 marks concentration; 80% from one video marks single-video dominance. These values are explicit in
+`VideoConcentrationConfig`. Counts use retained corpus rows and do not expand exact or semantic duplicates.
+
+A concentration warning does not invalidate a cluster. It means the apparent topic—or its problem evidence—may be
+specific to a source video and should be checked before generalising to an industry or audience. Conversely, many
+videos do not prove semantic quality because a repeated generic phrase may occur across sources.
+
+With `SAVE_REPORT=True`, aggregate diagnostics are written to `video-concentration.jsonl` with a checksum-bound
+manifest. Video IDs, texts, and author identities are not exported. The notebook displays both scopes side by side
+and adds concentrated topics to a manual-review queue.
+
 When `SAVE_REPORT=True`, output is written outside the immutable run tree to
 `/content/drive/MyDrive/b2b-radar/visualizations/<run-id>/`. Existing reports are not overwritten unless
 `OVERWRITE_REPORT=True`. The report manifest has its own schema version and records the source pipeline-manifest hash;

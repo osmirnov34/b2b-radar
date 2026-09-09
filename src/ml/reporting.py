@@ -362,6 +362,77 @@ class ProblemPriorityReportManifest(_ReportModel):
     created_at: datetime
 
 
+class VideoConcentrationStatus(StrEnum):
+    """Describe source concentration without judging topic validity."""
+
+    DISTRIBUTED = "distributed"
+    CONCENTRATED = "concentrated"
+    SINGLE_VIDEO_DOMINATED = "single_video_dominated"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
+class VideoConcentrationConfig(_ReportModel):
+    """Configure evidence gates and transparent concentration thresholds."""
+
+    schema_version: int = 1
+    minimum_topic_records: int = Field(default=20, ge=1)
+    minimum_signal_records: int = Field(default=5, ge=1)
+    minimum_video_id_coverage: float = Field(default=0.95, gt=0, le=1)
+    single_video_dominated_share: float = Field(default=0.8, gt=0, le=1)
+    concentrated_top_video_share: float = Field(default=0.5, gt=0, lt=1)
+    concentrated_hhi: float = Field(default=0.25, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> VideoConcentrationConfig:
+        if self.single_video_dominated_share <= self.concentrated_top_video_share:
+            msg = "single-video threshold must exceed the concentrated threshold"
+            raise ValueError(msg)
+        return self
+
+
+class VideoConcentrationMetrics(_ReportModel):
+    """Summarize how retained rows are distributed across known source videos."""
+
+    records: int = Field(ge=0)
+    records_with_video_id: int = Field(ge=0)
+    video_id_coverage: float = Field(ge=0, le=1)
+    unique_videos: int = Field(ge=0)
+    top_video_share: float = Field(ge=0, le=1)
+    top_three_video_share: float = Field(ge=0, le=1)
+    hhi: float = Field(ge=0, le=1)
+    effective_videos: float = Field(ge=0)
+
+
+class TopicVideoConcentration(_ReportModel):
+    """Compare source concentration for a topic and its problem-signal subset."""
+
+    topic_id: int = Field(ge=0)
+    topic_name: str
+    topic: VideoConcentrationMetrics
+    problem_signals: VideoConcentrationMetrics
+    topic_status: VideoConcentrationStatus
+    problem_signal_status: VideoConcentrationStatus
+    requires_manual_review: bool
+    interpretation: str = "source-concentration diagnostic; not evidence that the topic is invalid"
+
+
+class VideoConcentrationReportManifest(_ReportModel):
+    """Bind aggregate video-concentration diagnostics to verified artifacts."""
+
+    report_schema_version: int = 1
+    run_id: str
+    pipeline_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    corpus_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    labels_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signal_config: ProblemSignalConfig
+    config: VideoConcentrationConfig
+    diagnostics_path: str
+    diagnostics_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    topics: int = Field(ge=0)
+    private_text_included: bool = False
+    created_at: datetime
+
+
 class ProcessingFlowStep(_ReportModel):
     stage: str
     records: int = Field(ge=0)
@@ -505,6 +576,14 @@ class _ProblemSignalState:
     videos: set[str] = field(default_factory=set)
     signal_videos: set[str] = field(default_factory=set)
     signals: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class _VideoConcentrationState:
+    records: int = 0
+    videos: dict[str, int] = field(default_factory=dict)
+    signal_records: int = 0
+    signal_videos: dict[str, int] = field(default_factory=dict)
 
 
 def _sha256_file(path: Path) -> str:
@@ -1740,6 +1819,193 @@ def write_problem_priority_report(
         priorities_path=str(priorities_path),
         priorities_sha256=_sha256_file(priorities_path),
         ranked_topics=len(priorities),
+        created_at=datetime.now(UTC),
+    )
+    manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
+    manifest_tmp.replace(manifest_path)
+    return manifest
+
+
+def _add_video_record(counts: dict[str, int], video_id: str) -> None:
+    if video_id:
+        counts[video_id] = counts.get(video_id, 0) + 1
+
+
+def _video_concentration_metrics(records: int, videos: dict[str, int]) -> VideoConcentrationMetrics:
+    known_records = sum(videos.values())
+    shares = sorted((count / known_records for count in videos.values()), reverse=True) if known_records else []
+    hhi = sum(share**2 for share in shares)
+    return VideoConcentrationMetrics(
+        records=records,
+        records_with_video_id=known_records,
+        video_id_coverage=known_records / records if records else 0,
+        unique_videos=len(videos),
+        top_video_share=shares[0] if shares else 0,
+        top_three_video_share=sum(shares[:3]),
+        hhi=hhi,
+        effective_videos=1 / hhi if hhi else 0,
+    )
+
+
+def _video_concentration_status(
+    metrics: VideoConcentrationMetrics,
+    minimum_records: int,
+    config: VideoConcentrationConfig,
+) -> VideoConcentrationStatus:
+    if metrics.records < minimum_records or metrics.video_id_coverage < config.minimum_video_id_coverage:
+        return VideoConcentrationStatus.INSUFFICIENT_DATA
+    if metrics.top_video_share >= config.single_video_dominated_share:
+        return VideoConcentrationStatus.SINGLE_VIDEO_DOMINATED
+    if (
+        metrics.top_video_share >= config.concentrated_top_video_share
+        or metrics.hhi >= config.concentrated_hhi
+    ):
+        return VideoConcentrationStatus.CONCENTRATED
+    return VideoConcentrationStatus.DISTRIBUTED
+
+
+def _accumulate_video_concentration(
+    state: _VideoConcentrationState,
+    record: CorpusRecord,
+    signal_config: ProblemSignalConfig,
+) -> None:
+    state.records += 1
+    _add_video_record(state.videos, record.video_id)
+    if _matched_problem_signals(record.clean_text, signal_config):
+        state.signal_records += 1
+        _add_video_record(state.signal_videos, record.video_id)
+
+
+def _topic_video_concentration(
+    topic: TopicRepresentation,
+    state: _VideoConcentrationState,
+    config: VideoConcentrationConfig,
+) -> TopicVideoConcentration:
+    if state.records == 0:
+        msg = f"topic {topic.topic_id} has no final assigned records"
+        raise ValueError(msg)
+    topic_metrics = _video_concentration_metrics(state.records, state.videos)
+    signal_metrics = _video_concentration_metrics(state.signal_records, state.signal_videos)
+    topic_status = _video_concentration_status(topic_metrics, config.minimum_topic_records, config)
+    signal_status = _video_concentration_status(signal_metrics, config.minimum_signal_records, config)
+    risky = {
+        VideoConcentrationStatus.CONCENTRATED,
+        VideoConcentrationStatus.SINGLE_VIDEO_DOMINATED,
+    }
+    return TopicVideoConcentration(
+        topic_id=topic.topic_id,
+        topic_name=topic.name,
+        topic=topic_metrics,
+        problem_signals=signal_metrics,
+        topic_status=topic_status,
+        problem_signal_status=signal_status,
+        requires_manual_review=topic_status in risky or signal_status in risky,
+    )
+
+
+def assess_video_concentration(
+    artifacts: AnalysisArtifacts,
+    *,
+    signal_config: ProblemSignalConfig | None = None,
+    config: VideoConcentrationConfig | None = None,
+) -> list[TopicVideoConcentration]:
+    """Measure whether final topics or their problem signals rely on few videos.
+
+    Counts refer to retained corpus rows and are not expanded by duplicate counts.
+    Missing video IDs reduce source coverage and can force ``insufficient_data``.
+
+    Args:
+        artifacts: Checksum-verified artifacts for one pipeline run.
+        signal_config: Lexical marker policy shared with problem triage.
+        config: Concentration thresholds and minimum evidence gates.
+
+    Returns:
+        One aggregate diagnostic per normalized final topic.
+
+    Raises:
+        ValueError: If corpus checksum, row alignment, labels, or topics disagree.
+
+    """
+    active_signal_config = signal_config or ProblemSignalConfig()
+    active_config = config or VideoConcentrationConfig()
+    if _sha256_file(artifacts.corpus_path) != artifacts.corpus.corpus_sha256:
+        msg = "video-concentration corpus checksum does not match its manifest"
+        raise ValueError(msg)
+    topics = {topic.topic_id: topic for topic in artifacts.topics}
+    states = {topic_id: _VideoConcentrationState() for topic_id in topics}
+    corpus_rows = 0
+    with artifacts.corpus_path.open(encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            if corpus_rows >= len(artifacts.labels):
+                msg = "video-concentration corpus contains more rows than final labels"
+                raise ValueError(msg)
+            label = int(artifacts.labels[corpus_rows])
+            record = CorpusRecord.model_validate_json(line)
+            corpus_rows += 1
+            if label < 0:
+                continue
+            if label not in states:
+                msg = f"final assignment refers to unknown topic ID: {label}"
+                raise ValueError(msg)
+            _accumulate_video_concentration(states[label], record, active_signal_config)
+    if corpus_rows != len(artifacts.labels) or corpus_rows != artifacts.summary.records:
+        msg = "video-concentration corpus and final labels are not row-aligned"
+        raise ValueError(msg)
+    return [
+        _topic_video_concentration(topic, states[topic_id], active_config)
+        for topic_id, topic in topics.items()
+    ]
+
+
+def write_video_concentration_report(
+    artifacts: AnalysisArtifacts,
+    output_dir: Path,
+    *,
+    signal_config: ProblemSignalConfig | None = None,
+    config: VideoConcentrationConfig | None = None,
+    overwrite: bool = False,
+) -> VideoConcentrationReportManifest:
+    """Write aggregate checksum-bound source-concentration diagnostics."""
+    target = output_dir.resolve()
+    if target.is_relative_to(artifacts.run_dir.resolve()):
+        msg = "video-concentration reports must be stored outside the ML run directory"
+        raise ValueError(msg)
+    active_signal_config = signal_config or ProblemSignalConfig()
+    active_config = config or VideoConcentrationConfig()
+    diagnostics = assess_video_concentration(
+        artifacts,
+        signal_config=active_signal_config,
+        config=active_config,
+    )
+    diagnostics_path = target / "video-concentration.jsonl"
+    manifest_path = target / "video-concentration-manifest.json"
+    if not overwrite and (diagnostics_path.exists() or manifest_path.exists()):
+        msg = f"video-concentration report already exists: {target}"
+        raise FileExistsError(msg)
+    target.mkdir(parents=True, exist_ok=True)
+    diagnostics_tmp = diagnostics_path.with_name(f".{diagnostics_path.name}.tmp")
+    manifest_tmp = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    with diagnostics_tmp.open("w", encoding="utf-8") as target_file:
+        for diagnostic in diagnostics:
+            target_file.write(f"{diagnostic.model_dump_json()}\n")
+    diagnostics_tmp.replace(diagnostics_path)
+    labels_sha256 = (
+        artifacts.reassignment.final_labels_sha256
+        if artifacts.reassignment is not None
+        else artifacts.clustering.labels_sha256
+    )
+    manifest = VideoConcentrationReportManifest(
+        run_id=artifacts.run_id,
+        pipeline_manifest_sha256=artifacts.pipeline_manifest_sha256,
+        corpus_sha256=artifacts.corpus.corpus_sha256,
+        labels_sha256=labels_sha256,
+        signal_config=active_signal_config,
+        config=active_config,
+        diagnostics_path=str(diagnostics_path),
+        diagnostics_sha256=_sha256_file(diagnostics_path),
+        topics=len(diagnostics),
         created_at=datetime.now(UTC),
     )
     manifest_tmp.write_text(f"{manifest.model_dump_json(indent=2)}\n", encoding="utf-8")
