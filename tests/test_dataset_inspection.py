@@ -6,6 +6,7 @@ import pytest
 from src.ml import DatasetFormat, compare_record_count, detect_dataset_format, inspect_comments_jsonl
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FORMAT_SAMPLE_BYTES = 128 * 1024
 
 
 def test_record_count_comparator_uses_symmetric_relative_tolerance() -> None:
@@ -18,7 +19,7 @@ def test_record_count_comparator_uses_symmetric_relative_tolerance() -> None:
     assert not blocked.matches
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     ("actual", "expected", "tolerance"),
     [(-1, 1, 0.1), (1, 0, 0.1), (1, 1, -0.1), (1, 1, 1.1)],
 )
@@ -27,7 +28,7 @@ def test_record_count_comparator_rejects_invalid_arguments(actual: int, expected
         compare_record_count(actual=actual, expected=expected, tolerance=tolerance)
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     ("filename", "content", "expected"),
     [
         ("data.jsonl", b'{"comment_text":"one"}\n{"comment_text":"two"}\n', DatasetFormat.JSONL),
@@ -50,6 +51,32 @@ def test_detect_dataset_format(tmp_path: Path, filename: str, content: bytes, ex
 
     assert result.detected == expected
     assert result.matches is (expected == DatasetFormat.JSONL)
+
+
+def test_detect_jsonl_when_utf8_character_crosses_sample_boundary(tmp_path: Path) -> None:
+    path = tmp_path / "boundary.jsonl"
+    first_line = b'{"comment_text":"ok"}\n'
+    padding = b" " * (FORMAT_SAMPLE_BYTES - len(first_line) - 1)
+    path.write_bytes(first_line + padding + "И\n".encode())
+
+    result = detect_dataset_format(path)
+
+    assert result.detected == DatasetFormat.JSONL
+    assert result.encoding == "utf-8"
+    assert result.matches
+
+
+def test_detect_binary_when_invalid_utf8_is_inside_sample(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.jsonl"
+    path.write_bytes(b'{"comment_text":"ok"}\n' + b" " * 100 + b"\xffbroken")
+
+    result = detect_dataset_format(path)
+
+    assert result.detected == DatasetFormat.BINARY
+    assert result.encoding is None
+    assert result.matches is False
+    assert result.details is not None
+    assert "invalid UTF-8" in result.details
 
 
 def test_inspection_profiles_valid_fixture_without_exposing_text() -> None:

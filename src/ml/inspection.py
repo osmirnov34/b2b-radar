@@ -1,3 +1,4 @@
+import codecs
 import csv
 import hashlib
 import json
@@ -184,7 +185,8 @@ def detect_dataset_format(path: Path, *, expected: DatasetFormat = DatasetFormat
         return FormatInspection(expected=expected, detected=DatasetFormat.GZIP, matches=False, details="GZIP signature")
 
     try:
-        text = sample.decode("utf-8-sig")
+        decoder = codecs.getincrementaldecoder("utf-8-sig")()
+        text = decoder.decode(sample, final=False)
     except UnicodeDecodeError as exc:
         return FormatInspection(
             expected=expected,
@@ -396,14 +398,10 @@ def inspect_comments_jsonl(
                 queries.add(comment.search_query)
             if comment.comment_published_at is not None:
                 date_min = (
-                    comment.comment_published_at
-                    if date_min is None
-                    else min(date_min, comment.comment_published_at)
+                    comment.comment_published_at if date_min is None else min(date_min, comment.comment_published_at)
                 )
                 date_max = (
-                    comment.comment_published_at
-                    if date_max is None
-                    else max(date_max, comment.comment_published_at)
+                    comment.comment_published_at if date_max is None else max(date_max, comment.comment_published_at)
                 )
 
     checked_rows = json_invalid + non_objects + contract_valid + contract_invalid
