@@ -25,7 +25,7 @@ def test_clustering_grid_notebook_is_clean_and_parses() -> None:
 def test_clustering_grid_notebook_is_guarded_resumable_and_source_safe() -> None:
     source = "\n".join(_sources())
 
-    assert "MIN_CLUSTER_SIZES = (50, 100, 150, 250)" in source
+    assert "MIN_CLUSTER_SIZES = (2, 3, 5, 10)" in source
     assert "RUN_GRID = False" in source
     assert 'grid_dir = Path(DRIVE_PROJECT_DIR) / "ml-experiments"' in source
     assert "base_config=artifacts.clustering.config" in source

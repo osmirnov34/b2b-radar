@@ -60,7 +60,7 @@ Stages 10 and 11 consume normalized labels, probabilities, summary, and `cluster
 
 ## Min-cluster-size experiment
 
-Use `notebooks/03_colab_clustering_grid.ipynb` to compare the fixed grid `[50, 100, 150, 250]` after a source run has
+Use `notebooks/03_colab_clustering_grid.ipynb` to compare the fixed grid `[2, 3, 5, 10]` after a source run has
 completed stage 8. Every variant uses the same checksum-bound development corpus and `clustering-reduced.npy`; only
 `min_cluster_size` changes. The source run is never modified.
 

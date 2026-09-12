@@ -37,7 +37,7 @@ class ClusteringGridConfig(_ExperimentModel):
     """Define one controlled min-cluster-size experiment."""
 
     schema_version: int = 1
-    min_cluster_sizes: tuple[int, ...] = (50, 100, 150, 250)
+    min_cluster_sizes: tuple[int, ...] = (2, 3, 5, 10)
     base_config: HDBSCANConfig = Field(default_factory=HDBSCANConfig)
 
     @model_validator(mode="after")
