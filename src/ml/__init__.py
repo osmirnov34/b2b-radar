@@ -1,5 +1,6 @@
 """Reusable contracts and services for offline topic analysis."""
 
+from src.data_formats import DatasetFormat, FormatInspection, detect_dataset_format
 from src.ml.cleaning import (
     THANKS_TOKENS,
     PreparedText,
@@ -115,14 +116,11 @@ from src.ml.export import (
     export_topic_results,
 )
 from src.ml.inspection import (
-    DatasetFormat,
     DatasetInspection,
-    FormatInspection,
     InspectionError,
     RecordCountComparison,
     TextLengthStats,
     compare_record_count,
-    detect_dataset_format,
     inspect_comments_jsonl,
 )
 from src.ml.interactive_report import (

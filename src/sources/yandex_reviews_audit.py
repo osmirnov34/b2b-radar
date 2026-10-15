@@ -10,9 +10,10 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from src.ml.inspection import DatasetFormat, FormatInspection, detect_dataset_format
+from src.data_formats import DatasetFormat, FormatInspection, detect_dataset_format
+from src.sources.yandex_reviews import YandexReview, sanitized_validation_message
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,8 +23,6 @@ _EXPECTED_FIELDS = (
     "org_id", "org_name", "org_url", "search_query",
 )
 _REQUIRED_FIELDS = ("review_id", "review_text", "rating", "published_at", "org_id", "org_name", "org_url")
-_IDENTITY_FIELDS = ("review_id", "org_id", "org_name", "org_url")
-_OPTIONAL_STRING_FIELDS = ("author", "search_query")
 _MINIMUM_RATING = 1
 _MAXIMUM_RATING = 5
 _SHORT_TEXT_LENGTH = 20
@@ -206,31 +205,6 @@ def _valid_org_url(value: object) -> bool:
     return parsed.scheme == "https" and parsed.hostname in {"yandex.ru", "www.yandex.ru"}
 
 
-def _record_errors(data: dict[str, Any]) -> list[str]:
-    errors = [f"missing required field {name}" for name in _REQUIRED_FIELDS if name not in data]
-    errors.extend(
-        f"{name} must be a string"
-        for name in (*_IDENTITY_FIELDS, "review_text")
-        if name in data and not isinstance(data[name], str)
-    )
-    errors.extend(
-        f"{name} cannot be blank"
-        for name in _IDENTITY_FIELDS
-        if name in data and isinstance(data[name], str) and not data[name].strip()
-    )
-    rating = data.get("rating")
-    if "rating" in data and (type(rating) is not int or not _MINIMUM_RATING <= rating <= _MAXIMUM_RATING):
-        errors.append("rating must be an integer from 1 to 5")
-    if "published_at" in data and _parse_date(data.get("published_at")) is None:
-        errors.append("published_at must be an ISO date")
-    errors.extend(
-        f"{name} must be a string or null"
-        for name in _OPTIONAL_STRING_FIELDS
-        if name in data and data[name] is not None and not isinstance(data[name], str)
-    )
-    return errors
-
-
 @dataclass
 class _AuditAccumulator:
     config: YandexReviewAuditConfig
@@ -302,13 +276,15 @@ class _AuditAccumulator:
         self._observe_fields(data)
         self._observe_rating(data.get("rating"))
         self._observe_date(data.get("published_at"))
-        validation_errors = _record_errors(data)
-        if validation_errors:
+        self._observe_raw_url(data)
+        try:
+            review = YandexReview.model_validate(data)
+        except ValidationError as exc:
             self.contract_invalid += 1
-            self._add_error(line, raw, "schema", "; ".join(validation_errors), data)
+            self._add_error(line, raw, "schema", sanitized_validation_message(exc), data)
             return
         self.contract_valid += 1
-        self._observe_valid_record(data)
+        self._observe_valid_record(review)
 
     def _observe_fields(self, data: dict[str, Any]) -> None:
         for key, value in data.items():
@@ -338,12 +314,23 @@ class _AuditAccumulator:
         self.dates.append(parsed)
         self.future_dates += parsed > self.reference_date
 
-    def _observe_valid_record(self, data: dict[str, Any]) -> None:
-        review_id = str(data["review_id"]).strip()
-        text = str(data["review_text"]).strip()
-        org_id = str(data["org_id"]).strip()
-        org_name = str(data["org_name"]).strip()
-        org_url = str(data["org_url"]).strip()
+    def _observe_raw_url(self, data: dict[str, Any]) -> None:
+        if "org_url" not in data:
+            return
+        org_id = data.get("org_id")
+        org_url = data["org_url"]
+        if not _valid_org_url(org_url):
+            self.invalid_urls += 1
+            return
+        if _non_empty_string(org_id) and f"/org/{str(org_id).strip()}/" not in urlparse(str(org_url)).path:
+            self.url_id_mismatches += 1
+
+    def _observe_valid_record(self, review: YandexReview) -> None:
+        review_id = review.review_id
+        text = review.review_text.strip()
+        org_id = review.org_id
+        org_name = review.org_name
+        org_url = review.org_url
         fingerprint = (_text_hash(text), org_id)
         previous = self.review_ids.get(review_id)
         self.duplicate_ids += previous is not None
@@ -357,9 +344,7 @@ class _AuditAccumulator:
         self.name_org_ids[org_name.casefold()].add(org_id)
         self.org_counts[org_id] += 1
         self.org_display_names.setdefault(org_id, org_name)
-        self.invalid_urls += not _valid_org_url(org_url)
-        self.url_id_mismatches += _valid_org_url(org_url) and f"/org/{org_id}/" not in urlparse(org_url).path
-        query = data.get("search_query")
+        query = review.search_query
         if _non_empty_string(query):
             self.queries.add(str(query).strip())
         else:

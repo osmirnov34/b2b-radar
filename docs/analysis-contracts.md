@@ -8,6 +8,27 @@ live in `src/ml/schemas.py`; fixtures in `tests/fixtures/` are canonical reader 
 Readers ignore unknown fields for forward compatibility. Producers must preserve the required fields and their
 meaning. Text is UTF-8 in every format.
 
+## Yandex Maps reviews source (`yandex-reviews.jsonl`)
+
+The source adapter accepts one strict JSON object per line. It rejects unreviewed extra fields, invalid identifiers,
+non-calendar dates, coerced ratings, non-Yandex URLs, and organization URLs that disagree with `org_id`. Validation
+diagnostics contain line numbers, field names and types, and content hashes, but never review or author values.
+
+| Field | Type | Constraint |
+|---|---|---|
+| `review_id` | string | Exactly 16 lowercase hexadecimal characters |
+| `review_text` | string | Original text preserved without whitespace normalization |
+| `rating` | integer | Strict integer in `1..5` |
+| `author` | string or null | Null normalizes to an empty restricted-source value |
+| `published_at` | `YYYY-MM-DD` | Calendar date without time-of-day |
+| `org_id` | string | Non-empty decimal Yandex organization identifier |
+| `org_name` | string | Non-empty display name |
+| `org_url` | string | HTTPS `yandex.ru` URL containing the same `org_id` |
+| `search_query` | string or null | Null normalizes to an empty string |
+
+`YandexReview` is a source contract, not the common ML record. Conversion to the source-neutral feedback contract is
+performed separately so source semantics are not disguised as historical `video_*` fields.
+
 ## Comments export (`comments.jsonl`)
 
 One JSON object per line. `comment_text` is the only required field. Empty text is valid at the transport boundary and

@@ -13,7 +13,7 @@ from src.sources import (
 
 def _row(**updates: object) -> dict[str, object]:
     row: dict[str, object] = {
-        "review_id": "review-1",
+        "review_id": "7995cc14c8b92196",
         "review_text": "Подробный отзыв о качестве лечения без личных данных",
         "rating": 4,
         "author": "Private Person",
@@ -38,31 +38,36 @@ def test_audit_profiles_review_organization_rating_and_date_quality(tmp_path: Pa
         [
             _row(),
             _row(
-                review_id="review-2",
+                review_id="6529392e51d48c89",
                 rating=1,
                 published_at="2025-03-01",
                 org_id="2",
                 org_name="Другая стоматология",
                 org_url="https://yandex.ru/maps/org/2/reviews/",
             ),
-            _row(review_id="review-3", rating=5, published_at="2027-01-01", extra_field="value"),
+            _row(review_id="6b1ed2d4a2fe2eb5", rating=5, published_at="2027-01-01", extra_field="value"),
         ],
     )
 
     report = audit_yandex_reviews(
         source,
-        config=YandexReviewAuditConfig(reference_date=date(2026, 1, 1), minimum_reviews_for_comparison=2),
+        config=YandexReviewAuditConfig(
+            reference_date=date(2026, 1, 1),
+            minimum_reviews_for_comparison=2,
+            max_error_rate=1,
+        ),
     )
 
     assert report.is_usable
-    assert report.contract_valid == 3
-    assert report.unique_review_ids == 3
+    assert report.contract_valid == 2
+    assert report.contract_invalid == 1
+    assert report.unique_review_ids == 2
     assert report.unique_organizations == 2
     assert report.rating_distribution == {1: 1, 4: 1, 5: 1}
     assert report.published_at_min == date(2025, 2, 6)
     assert report.published_at_max == date(2027, 1, 1)
     assert report.future_dates == 1
-    assert report.organizations_at_or_above_minimum_reviews == 1
+    assert report.organizations_at_or_above_minimum_reviews == 0
     assert report.unknown_fields == {"extra_field": 1}
     assert "rating values absent from dataset: [2, 3]" in report.warnings
 
@@ -76,7 +81,7 @@ def test_audit_blocks_conflicting_review_ids_without_exposing_values(tmp_path: P
         [
             _row(review_text=private_text, author=private_author),
             _row(review_text="Different text", author=private_author),
-            _row(review_id="bad", rating=8, review_text=private_text, author=private_author),
+            _row(review_id="6b1ed2d4a2fe2eb5", rating=8, review_text=private_text, author=private_author),
         ],
     )
 
@@ -105,11 +110,17 @@ def test_audit_reports_identity_and_url_anomalies(tmp_path: Path) -> None:
         source,
         [
             _row(),
-            _row(review_id="2", org_name="Новое название"),
+            _row(review_id="6529392e51d48c89", org_name="Новое название"),
             _row(
-                review_id="3",
-                org_id="other",
+                review_id="6b1ed2d4a2fe2eb5",
+                org_id="1104602194",
                 org_name="Стоматология",
+                org_url="https://yandex.ru/maps/org/1104602194/reviews/",
+            ),
+            _row(
+                review_id="849a25d513520060",
+                org_id="123",
+                org_name="Некорректная ссылка",
                 org_url="http://example.test/not-yandex",
             ),
         ],

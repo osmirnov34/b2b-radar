@@ -1,24 +1,19 @@
-import codecs
-import csv
 import hashlib
 import json
 from collections import Counter
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from src.data_formats import FormatInspection, detect_dataset_format
 from src.ml.schemas import ExportedComment
 
-_FORMAT_SAMPLE_BYTES = 128 * 1024
-_MIN_TABLE_DIMENSION = 2
 _SHORT_TEXT_LENGTH = 5
 _DEFAULT_MIN_TEXT_LENGTH = 20
 _LONG_TEXT_LENGTH = 1_000
 _EXTREME_TEXT_LENGTH = 10_000
-_HTML_PREFIXES = ("<!doctype html", "<html", "<head", "<body")
 _PROVENANCE_FIELDS = (
     "comment_id",
     "comment_author",
@@ -31,31 +26,8 @@ _PROVENANCE_FIELDS = (
 )
 
 
-class DatasetFormat(StrEnum):
-    JSONL = "jsonl"
-    JSON_ARRAY = "json_array"
-    JSON_OBJECT = "json_object"
-    CSV = "csv"
-    TSV = "tsv"
-    HTML = "html"
-    ZIP = "zip"
-    GZIP = "gzip"
-    TEXT = "text"
-    BINARY = "binary"
-    EMPTY = "empty"
-    UNKNOWN = "unknown"
-
-
 class _InspectionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class FormatInspection(_InspectionModel):
-    expected: DatasetFormat = DatasetFormat.JSONL
-    detected: DatasetFormat
-    encoding: str | None = None
-    matches: bool
-    details: str | None = None
 
 
 class InspectionError(_InspectionModel):
@@ -154,80 +126,6 @@ def compare_record_count(*, actual: int, expected: int, tolerance: float) -> Rec
         relative_difference=relative_difference,
         tolerance=tolerance,
         matches=relative_difference <= tolerance,
-    )
-
-
-def _detect_delimited(text: str) -> DatasetFormat | None:
-    try:
-        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",\t;|")
-        rows = list(csv.reader(text[:8192].splitlines(), dialect))
-    except csv.Error:
-        return None
-    if len(rows) < _MIN_TABLE_DIMENSION or len(rows[0]) < _MIN_TABLE_DIMENSION:
-        return None
-    return DatasetFormat.TSV if dialect.delimiter == "\t" else DatasetFormat.CSV
-
-
-def detect_dataset_format(path: Path, *, expected: DatasetFormat = DatasetFormat.JSONL) -> FormatInspection:
-    with path.open("rb") as source:
-        sample = source.read(_FORMAT_SAMPLE_BYTES)
-    if not sample:
-        detected = DatasetFormat.EMPTY
-        return FormatInspection(
-            expected=expected,
-            detected=detected,
-            matches=detected == expected,
-            details="empty file",
-        )
-    if sample.startswith(b"PK\x03\x04"):
-        return FormatInspection(expected=expected, detected=DatasetFormat.ZIP, matches=False, details="ZIP signature")
-    if sample.startswith(b"\x1f\x8b"):
-        return FormatInspection(expected=expected, detected=DatasetFormat.GZIP, matches=False, details="GZIP signature")
-
-    try:
-        decoder = codecs.getincrementaldecoder("utf-8-sig")()
-        text = decoder.decode(sample, final=False)
-    except UnicodeDecodeError as exc:
-        return FormatInspection(
-            expected=expected,
-            detected=DatasetFormat.BINARY,
-            matches=False,
-            details=f"invalid UTF-8 near byte {exc.start}",
-        )
-
-    stripped = text.lstrip()
-    lowered = stripped[:256].lower()
-    if lowered.startswith(_HTML_PREFIXES):
-        detected = DatasetFormat.HTML
-    elif stripped.startswith("["):
-        detected = DatasetFormat.JSON_ARRAY
-    elif stripped.startswith("{"):
-        non_empty_lines = [line for line in text.splitlines() if line.strip()]
-        line_objects = 0
-        for line in non_empty_lines:
-            try:
-                if isinstance(json.loads(line), dict):
-                    line_objects += 1
-            except json.JSONDecodeError:
-                continue
-        looks_like_jsonl = non_empty_lines and line_objects * 2 >= len(non_empty_lines)
-        if looks_like_jsonl:
-            if len(non_empty_lines) == 1 and path.suffix.lower() == ".json":
-                detected = DatasetFormat.JSON_OBJECT
-            else:
-                detected = DatasetFormat.JSONL
-        else:
-            detected = DatasetFormat.JSON_OBJECT
-    else:
-        detected = _detect_delimited(text) or DatasetFormat.TEXT
-
-    details = f"first non-whitespace token: {stripped[:24]!r}" if stripped else "whitespace-only file"
-    return FormatInspection(
-        expected=expected,
-        detected=detected,
-        encoding="utf-8-sig" if sample.startswith(b"\xef\xbb\xbf") else "utf-8",
-        matches=detected == expected,
-        details=details,
     )
 
 

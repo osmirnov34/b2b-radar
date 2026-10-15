@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING, Protocol
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from src.data_formats import DatasetFormat, detect_dataset_format
 from src.ml.clustering import ClusteringManifest, HDBSCANConfig
 from src.ml.config import CleaningConfig, DeduplicationConfig, EmbeddingConfig
 from src.ml.dimensionality_reduction import UMAPConfig
 from src.ml.evaluation import EvaluationConfig, EvaluationMetrics, EvaluationStatus
 from src.ml.export import ExportConfig
-from src.ml.inspection import DatasetFormat, compare_record_count, detect_dataset_format
+from src.ml.inspection import compare_record_count
 from src.ml.outlier_reassignment import OutlierReassignmentConfig
 from src.ml.schemas import ExportedComment
 from src.ml.topic_representation import TopicRepresentationConfig
