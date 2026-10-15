@@ -9,6 +9,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from src.infrastructure.analytics_db import AnalyticsBase
 from src.infrastructure.db.models import Base
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -31,7 +32,7 @@ config.set_main_option("sqlalchemy.url", database_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-target_metadata = Base.metadata
+target_metadata = [Base.metadata, AnalyticsBase.metadata]
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
