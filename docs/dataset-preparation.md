@@ -1,5 +1,27 @@
 # Dataset preparation
 
+## Yandex Maps source audit
+
+Before introducing a Yandex Maps reviews source contract, audit the immutable JSONL independently of the historical
+YouTube comments contract:
+
+```bash
+uv run python scripts/audit_yandex_reviews.py data/raw/yandex-reviews.jsonl \
+  --report-dir data/reports/yandex-reviews \
+  --reference-date 2026-10-15 \
+  --minimum-reviews 30
+```
+
+The audit streams the file and verifies its JSONL encoding, field presence and types, review-ID integrity,
+organization identity consistency, Yandex URLs, rating range, ISO dates, exact normalized text duplication, and the
+number of organizations eligible for comparison. Reports never contain review text or author values. The explicit
+reference date makes future-date diagnostics reproducible; omit it only for an interactive current-day check.
+Missing values in the expected `1..5` rating scale are reported as non-blocking coverage warnings so that a filtered
+source export cannot silently be interpreted as the full customer-rating distribution.
+
+This command does not convert the source and does not make it compatible with the existing `ExportedComment`
+pipeline contract. Source adaptation is a separate reviewed operation.
+
 The full comment corpus is local data and must never be committed. Place the unchanged download at
 `data/raw/comments.jsonl`; derived samples and reports stay under `data/` and are ignored by Git.
 
