@@ -29,6 +29,29 @@ diagnostics contain line numbers, field names and types, and content hashes, but
 `YandexReview` is a source contract, not the common ML record. Conversion to the source-neutral feedback contract is
 performed separately so source semantics are not disguised as historical `video_*` fields.
 
+## Canonical analytical feedback (`FeedbackRecord`)
+
+Every supported adapter converts its verified source record to the immutable `FeedbackRecord` before analytical
+storage or metric calculation. The canonical record uses business-neutral names and therefore does not make
+PostgreSQL, reports, or BI views depend on Yandex-specific JSON fields.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `feedback_id` | string | Globally namespaced identifier, currently `yandex_maps:<review_id>` |
+| `source` | enum | Origin of the observation, currently `yandex_maps` |
+| `source_record_id` | string | Original platform record identifier for traceability |
+| `text` | string | Original feedback text used by later text processing |
+| `rating` | integer | Source rating in `1..5` |
+| `published_on` | date | Source publication calendar date |
+| `organization_id` | string | Stable source organization identifier |
+| `organization_name` | string | Organization display name at collection time |
+| `organization_url` | string | Provenance URL for the organization |
+| `search_query` | string | Query that selected the source organization, when available |
+
+The canonical analytical record intentionally has no author field. A display name is neither a stable customer ID
+nor required for the agreed first-version metrics, so propagating it would add privacy exposure without analytical
+value. This means record counts must never be presented as unique-customer counts.
+
 ## Comments export (`comments.jsonl`)
 
 One JSON object per line. `comment_text` is the only required field. Empty text is valid at the transport boundary and

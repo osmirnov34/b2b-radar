@@ -11,6 +11,7 @@ from src.sources import (
     YandexReviewLineError,
     iter_yandex_reviews,
     parse_yandex_review_line,
+    yandex_review_to_feedback,
 )
 
 
@@ -97,3 +98,16 @@ def test_reader_streams_jsonl_and_rejects_wrong_container(tmp_path: Path) -> Non
     html.write_text("<!doctype html><title>Not a dataset</title>", encoding="utf-8")
     with pytest.raises(YandexReviewFormatError, match="detected html"):
         list(iter_yandex_reviews(html))
+
+
+def test_yandex_review_converts_to_private_source_neutral_feedback() -> None:
+    review = YandexReview.model_validate(_row())
+
+    feedback = yandex_review_to_feedback(review)
+
+    assert feedback.feedback_id == "yandex_maps:7995cc14c8b92196"
+    assert feedback.source_record_id == review.review_id
+    assert feedback.text == review.review_text
+    assert feedback.published_on == review.published_at
+    assert feedback.organization_id == review.org_id
+    assert "author" not in feedback.model_dump()

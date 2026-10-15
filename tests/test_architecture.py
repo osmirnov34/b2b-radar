@@ -42,6 +42,15 @@ def test_sources_do_not_depend_on_ml() -> None:
     assert "src.ml" not in _python_sources("src/sources")
 
 
+def test_analytics_contracts_do_not_depend_on_sources_ml_or_delivery_layers() -> None:
+    sources = _python_sources("src/analytics")
+
+    assert "src.sources" not in sources
+    assert "src.ml" not in sources
+    assert "src.web" not in sources
+    assert "src.infrastructure" not in sources
+
+
 def test_shared_text_processing_has_no_outer_layer_dependencies() -> None:
     sources = _python_sources("src/text_processing")
 

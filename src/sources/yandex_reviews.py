@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from src.analytics import FeedbackRecord, FeedbackSource
 from src.data_formats import DatasetFormat, FormatInspection, detect_dataset_format
 
 if TYPE_CHECKING:
@@ -172,3 +173,19 @@ def iter_yandex_reviews(path: Path) -> Iterator[YandexReview]:
         for line_number, raw_line in enumerate(source, start=1):
             if raw_line.strip():
                 yield parse_yandex_review_line(raw_line, line_number=line_number)
+
+
+def yandex_review_to_feedback(review: YandexReview) -> FeedbackRecord:
+    """Convert a verified source record without leaking its author identity."""
+    return FeedbackRecord(
+        feedback_id=f"{FeedbackSource.YANDEX_MAPS.value}:{review.review_id}",
+        source=FeedbackSource.YANDEX_MAPS,
+        source_record_id=review.review_id,
+        text=review.review_text,
+        rating=review.rating,
+        published_on=review.published_at,
+        organization_id=review.org_id,
+        organization_name=review.org_name,
+        organization_url=review.org_url,
+        search_query=review.search_query,
+    )

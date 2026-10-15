@@ -7,6 +7,7 @@ from src.sources.yandex_reviews import (
     iter_yandex_reviews,
     parse_yandex_review_line,
     sanitized_validation_message,
+    yandex_review_to_feedback,
 )
 from src.sources.yandex_reviews_audit import (
     OrganizationReviewCount,
@@ -30,4 +31,5 @@ __all__ = [
     "parse_yandex_review_line",
     "sanitized_validation_message",
     "write_yandex_review_audit",
+    "yandex_review_to_feedback",
 ]
