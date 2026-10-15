@@ -52,6 +52,12 @@ The canonical analytical record intentionally has no author field. A display nam
 nor required for the agreed first-version metrics, so propagating it would add privacy exposure without analytical
 value. This means record counts must never be presented as unique-customer counts.
 
+Canonical datasets are accompanied by a strict `FeedbackPreparationManifest`. It binds the source and output using
+SHA-256 checksums and records their sizes, creation time, observation count, organization count, rating distribution,
+and publication-date coverage. Preparation refuses duplicate global feedback identifiers and existing destination
+files. The output and manifest are written through temporary files so invalid or interrupted input is not published as
+a completed artifact.
+
 ## Comments export (`comments.jsonl`)
 
 One JSON object per line. `comment_text` is the only required field. Empty text is valid at the transport boundary and

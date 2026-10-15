@@ -20,5 +20,18 @@ The JSON and Markdown reports contain aggregate field, identifier, organization,
 length statistics. They intentionally exclude review text and author values. The source file is read-only and is never
 rewritten by the audit.
 
+After a successful audit, create a source-neutral private analytical artifact at a new path:
+
+```bash
+uv run python scripts/prepare_yandex_feedback.py \
+  data/raw/yandex-reviews.jsonl \
+  data/interim/yandex-feedback.jsonl
+```
+
+The command also writes `data/interim/yandex-feedback.jsonl.manifest.json` with input/output checksums, record and
+organization counts, rating distribution, and date coverage. It never replaces existing files: use a new output path
+for a new dataset version or run. The canonical JSONL retains review text for downstream analysis but excludes author
+display names. Treat both the JSONL and its manifest as private local artifacts and do not commit them.
+
 Never commit comments, embeddings, generated reports, or model artifacts.
 Topic keywords and generated names can contain sensitive terms derived from comments; review them before export.
