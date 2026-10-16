@@ -33,5 +33,16 @@ organization counts, rating distribution, and date coverage. It never replaces e
 for a new dataset version or run. The canonical JSONL retains review text for downstream analysis but excludes author
 display names. Treat both the JSONL and its manifest as private local artifacts and do not commit them.
 
+After applying the PostgreSQL migrations, load the prepared pair transactionally:
+
+```bash
+uv run python scripts/load_analytics_feedback.py \
+  data/interim/yandex-feedback.jsonl \
+  data/interim/yandex-feedback.jsonl.manifest.json
+```
+
+The loader validates the entire artifact before writing, imports one snapshot in a single transaction, and safely
+recognizes an already loaded checksum. It never logs review text or author values.
+
 Never commit comments, embeddings, generated reports, or model artifacts.
 Topic keywords and generated names can contain sensitive terms derived from comments; review them before export.
