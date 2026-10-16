@@ -58,3 +58,14 @@ version so later metrics and dashboards can prove which PostgreSQL snapshot they
 
 Never commit comments, embeddings, generated reports, or model artifacts.
 Topic keywords and generated names can contain sensitive terms derived from comments; review them before export.
+
+# Приоритеты проблем
+
+После применения миграций и загрузки оценок можно получить рекомендации для выбранного запуска:
+
+```bash
+.venv/bin/python scripts/rank_analytics_problems.py 1
+```
+
+`1` — ID в `analytics.problem_runs`. Формула, статусы проверки и ограничения описаны в
+[документации приоритетов](../docs/problem-priorities.md).
