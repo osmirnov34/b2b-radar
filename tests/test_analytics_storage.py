@@ -13,6 +13,8 @@ def test_analytics_metadata_is_isolated_from_operational_tables() -> None:
         "analytics.datasets",
         "analytics.feedback",
         "analytics.organizations",
+        "analytics.problem_assessments",
+        "analytics.problem_runs",
     }
     assert not set(AnalyticsBase.metadata.tables).intersection(Base.metadata.tables)
     assert {table.schema for table in AnalyticsBase.metadata.tables.values()} == {ANALYTICS_SCHEMA}
@@ -67,3 +69,30 @@ def test_analytics_migration_extends_current_head_and_is_reversible() -> None:
     assert "CreateSchema(SCHEMA)" in migration
     assert 'op.drop_table("feedback", schema=SCHEMA)' in migration
     assert "DropSchema(SCHEMA)" in migration
+
+    problem_migration = (
+        PROJECT_ROOT / "migrations/versions/b8c9d0e1f2a3_add_analytics_problem_assessments.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | Sequence[str] | None = "a7c8d9e0f1a2"' in problem_migration
+    assert 'op.create_table(\n        "problem_runs"' in problem_migration
+    assert 'op.create_table(\n        "problem_assessments"' in problem_migration
+    assert 'op.drop_table("problem_assessments", schema=SCHEMA)' in problem_migration
+
+
+def test_problem_assessments_link_runs_and_feedback_without_copying_text() -> None:
+    table = AnalyticsBase.metadata.tables["analytics.problem_assessments"]
+
+    assert set(table.primary_key.columns.keys()) == {"run_id", "feedback_id", "category_id"}
+    assert "text" not in table.columns
+    assert "evidence_spans" in table.columns
+    targets = {
+        element.target_fullname
+        for constraint in table.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+        for element in constraint.elements
+    }
+    assert targets == {
+        "analytics.problem_runs.id",
+        "analytics.feedback.dataset_id",
+        "analytics.feedback.feedback_id",
+    }

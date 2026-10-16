@@ -13,6 +13,8 @@ analytics.datasets
         ├────────── * analytics.organizations
         │                         │ 1
         └─────────────────────────┴──── * analytics.feedback
+                 │ 1                         │ 1
+                 └──── * analytics.problem_runs ──── * analytics.problem_assessments
 ```
 
 - `datasets` identifies an immutable canonical artifact by SHA-256 and preserves its preparation metadata.
@@ -21,6 +23,9 @@ analytics.datasets
 - `feedback` is the private fact table. Its primary key is `(dataset_id, feedback_id)`, so repeated imports from
   different dataset versions remain distinguishable. A second uniqueness constraint prevents duplicate source records
   inside one snapshot.
+- `problem_runs` registers one immutable, versioned assessment artifact against an exact feedback snapshot.
+- `problem_assessments` stores category, stance, confidence, method, review state, and evidence offsets. It references
+  the private feedback row but never copies review text.
 
 Deleting a dataset cascades only through its own organizations and feedback. Rating and aggregate consistency checks
 are enforced by PostgreSQL. Indexes support the initial DataLens filters by dataset, organization, date, and rating.
@@ -74,3 +79,17 @@ Reconciliation verifies dataset metadata, organization and feedback counts, rati
 fingerprint of every reconstructed canonical record. It reports only counts of missing, unexpected, or changed rows;
 record identifiers and feedback text are never written to the report. A non-matching or missing snapshot returns a
 non-zero process status. Reports are created with exclusive mode and cannot overwrite an earlier validation result.
+
+## Loading problem assessments
+
+After loading the matching canonical feedback snapshot, import the checksum-verified output from stage 10:
+
+```bash
+uv run python scripts/load_problem_assessments.py \
+  data/analytics/yandex-feedback-problems.jsonl \
+  data/analytics/yandex-feedback-problems.jsonl.manifest.json
+```
+
+The preflight reconciles taxonomy, method, stance, category, and unique-key counts. Inside one transaction the loader
+resolves the exact dataset by feedback SHA-256, verifies every feedback foreign key and every evidence offset against
+the private source text length, then inserts the run and assessments. Repeating the same artifact is idempotent.
