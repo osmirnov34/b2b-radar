@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "ruleset_id": "moscow_dentistry_problem_rules",
+  "version": "1.0.0",
+  "taxonomy_id": "moscow_dentistry_problems",
+  "taxonomy_version": "1.0.0",
+  "complaint_rating_max": 3,
+  "praise_rating_min": 4,
+  "complaint_terms": ["не понрав", "не рекоменд", "не помог", "не смог", "не смогла", "не объясн", "не отвеч", "плохо", "ужас", "груб", "хам", "дорого", "больно", "долго", "разочар", "проблем", "жалоб", "обман"],
+  "praise_terms": ["хорош", "отлич", "прекрас", "вежлив", "вниматель", "без боли", "не больно", "не дорого", "не пришлось ждать", "не навязы", "быстро", "доволен", "рекомендую", "спасибо"],
+  "categories": [
+    {"category_id": "access_and_scheduling", "evidence_terms": ["запис", "дозвон", "свободн", "перенос", "отмен"]},
+    {"category_id": "waiting_time", "evidence_terms": ["ожидан", "очеред", "задерж", "ждал", "ждала", "ждать", "прожд"]},
+    {"category_id": "staff_communication", "evidence_terms": ["груб", "хам", "вежлив", "администратор", "отношен", "объясн"]},
+    {"category_id": "treatment_quality", "evidence_terms": ["передел", "осложнен", "диагноз", "результат", "не помог", "лечение", "пломб"]},
+    {"category_id": "pain_and_comfort", "evidence_terms": ["боль", "больно", "без боли", "анестез", "обезбол", "дискомфорт"]},
+    {"category_id": "pricing_and_billing", "evidence_terms": ["цен", "дорого", "стоимост", "счёт", "оплат", "возврат", "скидк", "рассроч"]},
+    {"category_id": "treatment_trust", "evidence_terms": ["навяз", "лишн", "план лечения", "довер", "развод", "обман"]},
+    {"category_id": "cleanliness_and_safety", "evidence_terms": ["гряз", "чист", "стериль", "гигиен", "санитар"]},
+    {"category_id": "follow_up_support", "evidence_terms": ["после лечения", "рекомендац", "обратн", "не отвеч", "консультац"]},
+    {"category_id": "facility_access", "evidence_terms": ["парков", "располож", "вход", "добраться", "метро", "пандус"]}
+  ]
+}

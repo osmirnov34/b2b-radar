@@ -205,9 +205,83 @@ class ProblemAssessmentBatch(_ProblemModel):
         return self
 
 
+class CategoryDetectionRule(_ProblemModel):
+    """Literal Russian stems used to produce conservative category candidates."""
+
+    category_id: str = Field(pattern=_CATEGORY_ID_PATTERN)
+    evidence_terms: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("evidence_terms")
+    @classmethod
+    def normalize_terms(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(dict.fromkeys(value.strip().casefold() for value in values if value.strip()))
+        if not normalized:
+            msg = "category detection terms cannot be empty"
+            raise ValueError(msg)
+        return normalized
+
+
+class ProblemDetectionRules(_ProblemModel):
+    """Versioned, deterministic baseline for hybrid problem candidate generation."""
+
+    schema_version: int = Field(default=1, ge=1)
+    ruleset_id: str = Field(pattern=_CATEGORY_ID_PATTERN)
+    version: str = Field(pattern=_VERSION_PATTERN)
+    taxonomy_id: str = Field(pattern=_CATEGORY_ID_PATTERN)
+    taxonomy_version: str = Field(pattern=_VERSION_PATTERN)
+    complaint_rating_max: int = Field(default=3, ge=1, le=5)
+    praise_rating_min: int = Field(default=4, ge=1, le=5)
+    complaint_terms: tuple[str, ...] = Field(min_length=1)
+    praise_terms: tuple[str, ...] = Field(min_length=1)
+    categories: tuple[CategoryDetectionRule, ...] = Field(min_length=1)
+
+    @field_validator("complaint_terms", "praise_terms")
+    @classmethod
+    def normalize_stance_terms(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(dict.fromkeys(value.strip().casefold() for value in values if value.strip()))
+        if not normalized:
+            msg = "stance detection terms cannot be empty"
+            raise ValueError(msg)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_rules(self) -> ProblemDetectionRules:
+        if self.complaint_rating_max >= self.praise_rating_min:
+            msg = "complaint and praise rating ranges must not overlap"
+            raise ValueError(msg)
+        identifiers = [category.category_id for category in self.categories]
+        if len(identifiers) != len(set(identifiers)):
+            msg = "problem detection category rules must be unique"
+            raise ValueError(msg)
+        return self
+
+
 def load_problem_taxonomy(path: Path) -> ProblemTaxonomy:
     """Load a strict UTF-8 JSON taxonomy without source feedback data."""
     return ProblemTaxonomy.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+
+def load_problem_detection_rules(path: Path) -> ProblemDetectionRules:
+    """Load strict deterministic rules without executing patterns from configuration."""
+    return ProblemDetectionRules.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+
+def validate_problem_detection_rules(
+    rules: ProblemDetectionRules,
+    taxonomy: ProblemTaxonomy,
+) -> ProblemDetectionRules:
+    """Require rules to cover active categories of one exact taxonomy version."""
+    if (rules.taxonomy_id, rules.taxonomy_version) != (taxonomy.taxonomy_id, taxonomy.version):
+        msg = "problem detection rules do not match taxonomy"
+        raise ValueError(msg)
+    configured = {rule.category_id for rule in rules.categories}
+    active = {category.category_id for category in taxonomy.categories if category.active}
+    if configured != active:
+        missing = ", ".join(sorted(active - configured)) or "none"
+        unknown = ", ".join(sorted(configured - active)) or "none"
+        msg = f"problem detection rule coverage mismatch; missing={missing}; unknown={unknown}"
+        raise ValueError(msg)
+    return rules
 
 
 def validate_assessment_batch(

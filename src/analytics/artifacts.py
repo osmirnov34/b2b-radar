@@ -143,3 +143,60 @@ class FeedbackMLAdaptationManifest(BaseModel):
             msg = "reassigned records cannot exceed assigned records"
             raise ValueError(msg)
         return self
+
+
+class ProblemAssessmentArtifactManifest(BaseModel):
+    """Checksum-bound summary of privacy-safe problem assessments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: int = 1
+    feedback_path: str
+    feedback_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    taxonomy_path: str
+    taxonomy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    taxonomy_id: str
+    taxonomy_version: str
+    rules_path: str
+    rules_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ruleset_id: str
+    ruleset_version: str
+    topic_assignments_path: str | None = None
+    topic_assignments_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    output_path: str
+    output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    generated_at: datetime
+    feedback_records: int = Field(ge=0)
+    assessed_feedback_records: int = Field(ge=0)
+    assessments: int = Field(ge=0)
+    rule_assessments: int = Field(ge=0)
+    hybrid_assessments: int = Field(ge=0)
+    complaint_assessments: int = Field(ge=0)
+    praise_assessments: int = Field(ge=0)
+    neutral_assessments: int = Field(ge=0)
+    mixed_assessments: int = Field(ge=0)
+    unclear_assessments: int = Field(ge=0)
+    category_counts: dict[str, int]
+
+    @model_validator(mode="after")
+    def validate_assessment_counts(self) -> ProblemAssessmentArtifactManifest:
+        stance_total = (
+            self.complaint_assessments
+            + self.praise_assessments
+            + self.neutral_assessments
+            + self.mixed_assessments
+            + self.unclear_assessments
+        )
+        if self.assessments != self.rule_assessments + self.hybrid_assessments:
+            msg = "rule and hybrid assessment counts must add up"
+            raise ValueError(msg)
+        if self.assessments != stance_total or self.assessments != sum(self.category_counts.values()):
+            msg = "stance and category assessment counts must add up"
+            raise ValueError(msg)
+        if self.assessed_feedback_records > self.feedback_records:
+            msg = "assessed feedback cannot exceed input feedback"
+            raise ValueError(msg)
+        if (self.topic_assignments_path is None) != (self.topic_assignments_sha256 is None):
+            msg = "topic assignment path and checksum must both be present or absent"
+            raise ValueError(msg)
+        return self
