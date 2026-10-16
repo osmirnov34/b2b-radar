@@ -97,3 +97,49 @@ class FeedbackReconciliationReport(BaseModel):
             msg = "database rating distribution does not add up"
             raise ValueError(msg)
         return self
+
+
+class FeedbackMLAdaptationManifest(BaseModel):
+    """Checksums and coverage for a canonical feedback-to-topic projection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: int = 1
+    feedback_path: str
+    feedback_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    feedback_manifest_path: str
+    feedback_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    corpus_path: str
+    corpus_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reassignment_manifest_path: str
+    reassignment_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    topic_manifest_path: str
+    topic_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    output_path: str
+    output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    adapted_at: datetime
+    feedback_records: int = Field(ge=0)
+    corpus_records: int = Field(ge=0)
+    matched_records: int = Field(ge=0)
+    unmatched_feedback_records: int = Field(ge=0)
+    assigned_records: int = Field(ge=0)
+    outlier_records: int = Field(ge=0)
+    reassigned_records: int = Field(ge=0)
+    topics: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> FeedbackMLAdaptationManifest:
+        """Ensure coverage and topic totals are internally consistent."""
+        if self.matched_records != self.corpus_records:
+            msg = "every corpus record must match exactly one feedback record"
+            raise ValueError(msg)
+        if self.feedback_records != self.matched_records + self.unmatched_feedback_records:
+            msg = "matched and unmatched feedback counts must add up"
+            raise ValueError(msg)
+        if self.matched_records != self.assigned_records + self.outlier_records:
+            msg = "assigned and outlier counts must add up"
+            raise ValueError(msg)
+        if self.reassigned_records > self.assigned_records:
+            msg = "reassigned records cannot exceed assigned records"
+            raise ValueError(msg)
+        return self
