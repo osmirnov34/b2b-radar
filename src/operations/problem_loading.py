@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -17,17 +18,19 @@ from src.analytics import (
     FeedbackProblemAssessment,
     FeedbackStance,
     ProblemAssessmentArtifactManifest,
+    ProblemTaxonomy,
+    load_problem_taxonomy,
 )
 from src.infrastructure.analytics_db import (
     AnalyticsDatasetModel,
     AnalyticsFeedbackModel,
     AnalyticsProblemAssessmentModel,
+    AnalyticsProblemCategoryModel,
     AnalyticsProblemRunModel,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +44,7 @@ class VerifiedProblemArtifact:
     """Fully parsed, aggregate-verified assessment artifact."""
 
     manifest: ProblemAssessmentArtifactManifest
+    taxonomy: ProblemTaxonomy
     assessments: tuple[FeedbackProblemAssessment, ...]
 
 
@@ -51,6 +55,7 @@ class ProblemLoadResult:
     run_id: int
     dataset_id: int
     assessments: int
+    categories: int
     already_loaded: bool
 
 
@@ -82,16 +87,27 @@ def _iter_assessments(path: Path) -> Iterator[FeedbackProblemAssessment]:
                 raise ProblemLoadError(msg) from exc
 
 
-def verify_problem_artifact(artifact_path: Path, manifest_path: Path) -> VerifiedProblemArtifact:
-    """Verify checksum, unique keys, taxonomy bindings, and aggregate counts."""
-    if not artifact_path.is_file():
-        msg = f"problem assessment artifact not found: {artifact_path}"
+def _verified_taxonomy(manifest: ProblemAssessmentArtifactManifest, override: Path | None) -> ProblemTaxonomy:
+    path = override or Path(manifest.taxonomy_path)
+    if not path.is_file() or _sha256(path) != manifest.taxonomy_sha256:
+        msg = "problem taxonomy is missing or does not match manifest"
         raise ProblemLoadError(msg)
-    manifest = _load_manifest(manifest_path)
-    if _sha256(artifact_path) != manifest.output_sha256:
-        msg = "problem assessment artifact checksum does not match manifest"
+    try:
+        taxonomy = load_problem_taxonomy(path)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        msg = "problem taxonomy is unreadable or invalid"
+        raise ProblemLoadError(msg) from exc
+    if (taxonomy.taxonomy_id, taxonomy.version) != (manifest.taxonomy_id, manifest.taxonomy_version):
+        msg = "problem taxonomy identity does not match manifest"
         raise ProblemLoadError(msg)
-    assessments = tuple(_iter_assessments(artifact_path))
+    return taxonomy
+
+
+def _verify_assessment_aggregates(
+    assessments: tuple[FeedbackProblemAssessment, ...],
+    manifest: ProblemAssessmentArtifactManifest,
+    taxonomy: ProblemTaxonomy,
+) -> None:
     keys: set[tuple[str, str]] = set()
     feedback_ids: set[str] = set()
     methods: Counter[AssessmentMethod] = Counter()
@@ -136,7 +152,29 @@ def verify_problem_artifact(artifact_path: Path, manifest_path: Path) -> Verifie
     if dict(categories) != manifest.category_counts:
         msg = "problem assessment category counts do not match manifest"
         raise ProblemLoadError(msg)
-    return VerifiedProblemArtifact(manifest=manifest, assessments=assessments)
+    if set(categories) - taxonomy.category_ids:
+        msg = "problem assessment artifact contains categories outside taxonomy"
+        raise ProblemLoadError(msg)
+
+
+def verify_problem_artifact(
+    artifact_path: Path,
+    manifest_path: Path,
+    *,
+    taxonomy_path: Path | None = None,
+) -> VerifiedProblemArtifact:
+    """Verify checksum, unique keys, taxonomy bindings, and aggregate counts."""
+    if not artifact_path.is_file():
+        msg = f"problem assessment artifact not found: {artifact_path}"
+        raise ProblemLoadError(msg)
+    manifest = _load_manifest(manifest_path)
+    if _sha256(artifact_path) != manifest.output_sha256:
+        msg = "problem assessment artifact checksum does not match manifest"
+        raise ProblemLoadError(msg)
+    taxonomy = _verified_taxonomy(manifest, taxonomy_path)
+    assessments = tuple(_iter_assessments(artifact_path))
+    _verify_assessment_aggregates(assessments, manifest, taxonomy)
+    return VerifiedProblemArtifact(manifest=manifest, taxonomy=taxonomy, assessments=assessments)
 
 
 def _assessment_batches(
@@ -205,6 +243,7 @@ async def load_problem_assessments(
     manifest_path: Path,
     *,
     batch_size: int = 1_000,
+    taxonomy_path: Path | None = None,
 ) -> ProblemLoadResult:
     """Import one verified assessment run in a single owned transaction."""
     if batch_size < 1:
@@ -213,7 +252,7 @@ async def load_problem_assessments(
     if session.in_transaction():
         msg = "loader requires a session without an active transaction"
         raise ProblemLoadError(msg)
-    verified = verify_problem_artifact(artifact_path, manifest_path)
+    verified = verify_problem_artifact(artifact_path, manifest_path, taxonomy_path=taxonomy_path)
     manifest = verified.manifest
     try:
         async with session.begin():
@@ -231,10 +270,19 @@ async def load_problem_assessments(
                 if count != manifest.assessments:
                     msg = "existing problem run is incomplete or inconsistent with manifest"
                     raise ProblemLoadError(msg)
+                category_count = await session.scalar(
+                    select(func.count())
+                    .select_from(AnalyticsProblemCategoryModel)
+                    .where(AnalyticsProblemCategoryModel.run_id == existing.id),
+                )
+                if category_count != len(verified.taxonomy.categories):
+                    msg = "existing problem taxonomy snapshot is incomplete"
+                    raise ProblemLoadError(msg)
                 return ProblemLoadResult(
                     run_id=existing.id,
                     dataset_id=existing.dataset_id,
                     assessments=manifest.assessments,
+                    categories=len(verified.taxonomy.categories),
                     already_loaded=True,
                 )
             dataset = await session.scalar(
@@ -264,6 +312,24 @@ async def load_problem_assessments(
             )
             session.add(run)
             await session.flush()
+            await session.execute(
+                insert(AnalyticsProblemCategoryModel),
+                [
+                    {
+                        "run_id": run.id,
+                        "category_id": category.category_id,
+                        "name_ru": category.name_ru,
+                        "definition_ru": category.definition_ru,
+                        "impact_hypotheses": json.dumps(
+                            [impact.value for impact in category.impact_hypotheses],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        "active": category.active,
+                    }
+                    for category in verified.taxonomy.categories
+                ],
+            )
             for batch in _assessment_batches(verified, run.id, dataset.id, batch_size):
                 await session.execute(insert(AnalyticsProblemAssessmentModel), batch)
     except SQLAlchemyError:
@@ -273,5 +339,6 @@ async def load_problem_assessments(
         run_id=run.id,
         dataset_id=dataset.id,
         assessments=manifest.assessments,
+        categories=len(verified.taxonomy.categories),
         already_loaded=False,
     )

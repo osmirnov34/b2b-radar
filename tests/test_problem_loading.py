@@ -70,6 +70,15 @@ def test_verify_problem_artifact_rejects_changed_bytes_without_text(tmp_path: Pa
     assert private_text not in str(captured.value)
 
 
+def test_verify_problem_artifact_rejects_changed_taxonomy(tmp_path: Path) -> None:
+    _, _, assessments, manifest = _artifacts(tmp_path)
+    taxonomy = tmp_path / "taxonomy.json"
+    taxonomy.write_bytes(TAXONOMY.read_bytes() + b"\n")
+
+    with pytest.raises(ProblemLoadError, match="taxonomy is missing or does not match"):
+        verify_problem_artifact(assessments, manifest, taxonomy_path=taxonomy)
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_problem_loading_is_transactional_and_idempotent(tmp_path: Path) -> None:
@@ -96,6 +105,7 @@ async def test_problem_loading_is_transactional_and_idempotent(tmp_path: Path) -
         assert first.already_loaded is False
         assert second.already_loaded is True
         assert second.run_id == first.run_id
+        assert first.categories == 10
         assert run_count == 1
         assert assessment_count == first.assessments
     finally:

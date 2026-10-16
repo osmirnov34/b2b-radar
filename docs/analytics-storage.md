@@ -15,6 +15,8 @@ analytics.datasets
         └─────────────────────────┴──── * analytics.feedback
                  │ 1                         │ 1
                  └──── * analytics.problem_runs ──── * analytics.problem_assessments
+                                      │ 1
+                                      └──── * analytics.problem_categories
 ```
 
 - `datasets` identifies an immutable canonical artifact by SHA-256 and preserves its preparation metadata.
@@ -26,6 +28,8 @@ analytics.datasets
 - `problem_runs` registers one immutable, versioned assessment artifact against an exact feedback snapshot.
 - `problem_assessments` stores category, stance, confidence, method, review state, and evidence offsets. It references
   the private feedback row but never copies review text.
+- `problem_categories` freezes Russian labels, definitions, and business-impact hypotheses for the exact taxonomy
+  version used by the run. Historical BI output therefore cannot silently adopt a newer taxonomy.
 
 Deleting a dataset cascades only through its own organizations and feedback. Rating and aggregate consistency checks
 are enforced by PostgreSQL. Indexes support the initial DataLens filters by dataset, organization, date, and rating.
@@ -92,4 +96,21 @@ uv run python scripts/load_problem_assessments.py \
 
 The preflight reconciles taxonomy, method, stance, category, and unique-key counts. Inside one transaction the loader
 resolves the exact dataset by feedback SHA-256, verifies every feedback foreign key and every evidence offset against
-the private source text length, then inserts the run and assessments. Repeating the same artifact is idempotent.
+the private source text length, then inserts the run, taxonomy snapshot, and assessments. Repeating the same artifact
+is idempotent. If the taxonomy was moved, pass its verified location with `--taxonomy`.
+
+## Aggregate KPI views
+
+Stage 12 exposes aggregate-only PostgreSQL views suitable for the first DataLens dashboard:
+
+- `analytics.organization_kpis`: review volume, average rating, rating distribution, low/high rating shares, and date
+  coverage by organization;
+- `analytics.problem_kpis`: category prevalence by organization and run, with `complaint`, `mixed`, and `praise`
+  reported separately;
+- `analytics.organization_monthly_kpis`: monthly review and rating dynamics;
+- `analytics.problem_monthly_kpis`: monthly category dynamics with complaint prevalence.
+
+Problem shares use all organization reviews in the same dataset (or month) as the denominator. A multi-label review
+may occur in several category rows, so category shares must not be summed. `complaint_share` is the primary problem
+indicator; `mixed_share` remains separate and `praise_share` describes strengths. Every view retains small groups but
+sets `sample_sufficient = false` below 30 source reviews. Views contain no review text, evidence excerpts, or authors.

@@ -14,6 +14,7 @@ def test_analytics_metadata_is_isolated_from_operational_tables() -> None:
         "analytics.feedback",
         "analytics.organizations",
         "analytics.problem_assessments",
+        "analytics.problem_categories",
         "analytics.problem_runs",
     }
     assert not set(AnalyticsBase.metadata.tables).intersection(Base.metadata.tables)
@@ -96,3 +97,21 @@ def test_problem_assessments_link_runs_and_feedback_without_copying_text() -> No
         "analytics.feedback.dataset_id",
         "analytics.feedback.feedback_id",
     }
+
+
+def test_kpi_migration_snapshots_taxonomy_and_keeps_stances_separate() -> None:
+    migration = (
+        PROJECT_ROOT / "migrations/versions/c9d0e1f2a3b4_add_analytics_kpi_marts.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'down_revision: str | Sequence[str] | None = "b8c9d0e1f2a3"' in migration
+    assert '"problem_categories"' in migration
+    assert "CREATE VIEW {SCHEMA}.organization_kpis" in migration
+    assert "CREATE VIEW {SCHEMA}.problem_kpis" in migration
+    assert "CREATE VIEW {SCHEMA}.organization_monthly_kpis" in migration
+    assert "CREATE VIEW {SCHEMA}.problem_monthly_kpis" in migration
+    assert "WHERE pa.stance = 'complaint'" in migration
+    assert "WHERE pa.stance = 'mixed'" in migration
+    assert "WHERE pa.stance = 'praise'" in migration
+    assert "MINIMUM_SAMPLE = 30" in migration
+    assert 'op.drop_table("problem_categories", schema=SCHEMA)' in migration

@@ -7,6 +7,7 @@ from src.infrastructure.analytics_db.models import (
     AnalyticsFeedbackModel,
     AnalyticsOrganizationModel,
     AnalyticsProblemAssessmentModel,
+    AnalyticsProblemCategoryModel,
     AnalyticsProblemRunModel,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "AnalyticsFeedbackModel",
     "AnalyticsOrganizationModel",
     "AnalyticsProblemAssessmentModel",
+    "AnalyticsProblemCategoryModel",
     "AnalyticsProblemRunModel",
 ]

@@ -6,6 +6,7 @@ from datetime import date, datetime  # noqa: TC003 -- SQLAlchemy resolves mapped
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -188,3 +189,25 @@ class AnalyticsProblemAssessmentModel(AnalyticsBase):
     review_status: Mapped[str] = mapped_column(String(32))
     reviewer_id: Mapped[str | None] = mapped_column(Text, default=None)
     assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AnalyticsProblemCategoryModel(AnalyticsBase):
+    """Taxonomy snapshot attached to one immutable problem run."""
+
+    __tablename__ = "problem_categories"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["run_id"],
+            [f"{ANALYTICS_SCHEMA}.problem_runs.id"],
+            ondelete="CASCADE",
+            name="fk_analytics_problem_categories_run",
+        ),
+        {"schema": ANALYTICS_SCHEMA},
+    )
+
+    run_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    category_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name_ru: Mapped[str] = mapped_column(Text)
+    definition_ru: Mapped[str] = mapped_column(Text)
+    impact_hypotheses: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean)
