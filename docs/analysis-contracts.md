@@ -58,6 +58,10 @@ and publication-date coverage. Preparation refuses duplicate global feedback ide
 files. The output and manifest are written through temporary files so invalid or interrupted input is not published as
 a completed artifact.
 
+Category-level interpretation uses the separately versioned `ProblemTaxonomy`, `FeedbackProblemAssessment`, and
+`ProblemAssessmentBatch` contracts described in `problem-model.md`. These contracts are multi-label and preserve
+uncertainty, method provenance, evidence offsets, and review state. They do not embed source text or author values.
+
 ## Comments export (`comments.jsonl`)
 
 One JSON object per line. `comment_text` is the only required field. Empty text is valid at the transport boundary and
