@@ -58,3 +58,19 @@ record and organization counts, rating distribution, publication range, source i
 consistent organization metadata. It then inserts the dataset, organizations, and feedback in one transaction using
 batches of 1,000 rows. A failure rolls back the complete snapshot. Repeating the same verified artifact is idempotent:
 the existing dataset ID is returned only after its stored row counts have been reconciled with the manifest.
+
+## Reconciling stored content
+
+After loading, compare every canonical record with PostgreSQL and optionally save an aggregate JSON report:
+
+```bash
+uv run python scripts/reconcile_analytics_feedback.py \
+  data/interim/yandex-feedback.jsonl \
+  data/interim/yandex-feedback.jsonl.manifest.json \
+  --report data/reports/yandex-feedback-reconciliation.json
+```
+
+Reconciliation verifies dataset metadata, organization and feedback counts, ratings, date coverage, and a SHA-256
+fingerprint of every reconstructed canonical record. It reports only counts of missing, unexpected, or changed rows;
+record identifiers and feedback text are never written to the report. A non-matching or missing snapshot returns a
+non-zero process status. Reports are created with exclusive mode and cannot overwrite an earlier validation result.

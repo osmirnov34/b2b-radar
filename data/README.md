@@ -44,5 +44,17 @@ uv run python scripts/load_analytics_feedback.py \
 The loader validates the entire artifact before writing, imports one snapshot in a single transaction, and safely
 recognizes an already loaded checksum. It never logs review text or author values.
 
+Verify the persisted snapshot after loading:
+
+```bash
+uv run python scripts/reconcile_analytics_feedback.py \
+  data/interim/yandex-feedback.jsonl \
+  data/interim/yandex-feedback.jsonl.manifest.json \
+  --report data/reports/yandex-feedback-reconciliation.json
+```
+
+The report contains aggregate differences only and is safe from raw feedback text. Keep it with the matching dataset
+version so later metrics and dashboards can prove which PostgreSQL snapshot they used.
+
 Never commit comments, embeddings, generated reports, or model artifacts.
 Topic keywords and generated names can contain sensitive terms derived from comments; review them before export.
