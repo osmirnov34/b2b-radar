@@ -69,3 +69,14 @@ Topic keywords and generated names can contain sensitive terms derived from comm
 
 `1` — ID в `analytics.problem_runs`. Формула, статусы проверки и ограничения описаны в
 [документации приоритетов](../docs/problem-priorities.md).
+
+## Пакет для DataLens
+
+После подготовки запуска разметки создайте SQL-источники и спецификацию графиков:
+
+```bash
+.venv/bin/python scripts/prepare_datalens_dashboard.py 1 data/reports/datalens-run-1
+```
+
+Здесь `1` — ID из `analytics.problem_runs`. Пакет не содержит данных или паролей и не создаёт графики в аккаунте.
+Порядок подключения и ручной сборки описан в [инструкции DataLens](../docs/datalens-dashboard.md).

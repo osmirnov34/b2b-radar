@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "title": "Аналитика стоматологий Москвы",
+  "minimum_migration": "e1f2a3b4c5d6",
+  "datasets": {
+    "organization_overview": {"grain": ["run_id", "organization_id"]},
+    "organization_monthly": {"grain": ["run_id", "organization_id", "month"]},
+    "category_overview": {"grain": ["run_id", "organization_id", "category_id"]},
+    "category_monthly": {"grain": ["run_id", "organization_id", "category_id", "month"]}
+  },
+  "metrics": {
+    "reviews": "SUM([feedback_count])",
+    "average_rating": "SUM([rating_sum]) / SUM([feedback_count])",
+    "low_rating_share": "SUM([low_rating_count]) / SUM([feedback_count])",
+    "complaint_share": "SUM([complaint_count]) / SUM([feedback_count])",
+    "mixed_share": "SUM([mixed_count]) / SUM([feedback_count])",
+    "praise_share": "SUM([praise_count]) / SUM([feedback_count])",
+    "accepted_complaint_share": "SUM([accepted_complaint_count]) / SUM([feedback_count])",
+    "unreviewed_complaint_share": "SUM([unreviewed_complaint_count]) / SUM([feedback_count])",
+    "rejected_assessments": "SUM([rejected_count])"
+  },
+  "filters": [
+    {"field": "organization_id", "datasets": ["organization_overview", "organization_monthly", "category_overview", "category_monthly"]},
+    {"field": "sample_sufficient", "datasets": ["organization_overview", "organization_monthly", "category_overview", "category_monthly"]},
+    {"field": "category_id", "datasets": ["category_overview", "category_monthly"]},
+    {"field": "month", "datasets": ["organization_monthly", "category_monthly"]}
+  ],
+  "charts": [
+    {"id": "review_volume", "title": "Количество отзывов", "dataset": "organization_overview", "type": "indicator", "dimensions": [], "metrics": ["reviews"]},
+    {"id": "rating", "title": "Средний рейтинг", "dataset": "organization_overview", "type": "indicator", "dimensions": [], "metrics": ["average_rating"]},
+    {"id": "low_rating", "title": "Доля оценок 1–3", "dataset": "organization_overview", "type": "indicator", "dimensions": [], "metrics": ["low_rating_share"]},
+    {"id": "clinics", "title": "Сравнение клиник", "dataset": "organization_overview", "type": "table", "dimensions": ["organization_id", "organization_name"], "metrics": ["reviews", "average_rating", "low_rating_share"]},
+    {"id": "complaints", "title": "Распространённость жалоб по категориям", "dataset": "category_overview", "type": "bar", "dimensions": ["category_id", "category_name_ru"], "metrics": ["complaint_share"]},
+    {"id": "strengths", "title": "Сильные стороны", "dataset": "category_overview", "type": "bar", "dimensions": ["category_id", "category_name_ru"], "metrics": ["praise_share"]},
+    {"id": "mixed", "title": "Смешанные оценки", "dataset": "category_overview", "type": "bar", "dimensions": ["category_id", "category_name_ru"], "metrics": ["mixed_share"]},
+    {"id": "review_state", "title": "Подтверждённые и предварительные жалобы", "dataset": "category_overview", "type": "bar", "dimensions": ["category_id", "category_name_ru"], "metrics": ["accepted_complaint_share", "unreviewed_complaint_share"]},
+    {"id": "rating_trend", "title": "Динамика рейтинга", "dataset": "organization_monthly", "type": "line", "dimensions": ["month"], "metrics": ["average_rating"]},
+    {"id": "volume_trend", "title": "Динамика числа отзывов", "dataset": "organization_monthly", "type": "line", "dimensions": ["month"], "metrics": ["reviews"]},
+    {"id": "category_trend", "title": "Динамика жалоб по категориям", "dataset": "category_monthly", "type": "line", "dimensions": ["month", "category_id", "category_name_ru"], "metrics": ["complaint_share"]},
+    {"id": "rejections", "title": "Отклонённые оценки разметки", "dataset": "category_overview", "type": "indicator", "dimensions": [], "metrics": ["rejected_assessments"]}
+  ]
+}

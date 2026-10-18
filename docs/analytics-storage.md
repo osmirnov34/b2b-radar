@@ -114,3 +114,10 @@ Problem shares use all organization reviews in the same dataset (or month) as th
 may occur in several category rows, so category shares must not be summed. `complaint_share` is the primary problem
 indicator; `mixed_share` remains separate and `praise_share` describes strengths. Every view retains small groups but
 sets `sample_sufficient = false` below 30 source reviews. Views contain no review text, evidence excerpts, or authors.
+
+## DataLens sources
+
+Migration `e1f2a3b4c5d6` adds four aggregate views in `analytics_bi`. These expose complete
+organization/category combinations, including zero-signal organizations, and scope each row to an assessment run.
+Use the separate BI reader role rather than granting DataLens access to private tables in `analytics`.
+See [dashboard assembly](datalens-dashboard.md) for SQL queries, weighted metrics and filter semantics.
