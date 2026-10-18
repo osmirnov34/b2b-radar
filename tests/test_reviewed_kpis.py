@@ -1,13 +1,21 @@
 import importlib.util
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from src.config import AnalyticsAPISettings
 from src.infrastructure.analytics_db import AnalyticsBase
 from src.operations.problem_priorities import load_problem_priorities
+from src.web import analytics_app
 
 
 def _migration(filename: str) -> ModuleType:
@@ -22,7 +30,9 @@ def _migration(filename: str) -> ModuleType:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_reviewed_kpis_exclude_rejected_and_preserve_denominator() -> None:  # noqa: PLR0915
+async def test_reviewed_kpis_exclude_rejected_and_preserve_denominator(  # noqa: PLR0915
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     url = os.getenv("TEST_DATABASE_URL")
     if url is None:
         pytest.skip("TEST_DATABASE_URL is not configured")
@@ -69,6 +79,11 @@ async def test_reviewed_kpis_exclude_rejected_and_preserve_denominator() -> None
                 (1, 1, 'review-3', 'waiting_time', 'complaint', 1.0, 0.9, 'rule', '[]', 'rejected', now())
             """)
             # Execute the old contracts first: CREATE OR REPLACE must preserve their column order and types.
+            previous = _migration("c9d0e1f2a3b4_add_analytics_kpi_marts.py")
+            previous.op = MagicMock()
+            previous.upgrade()
+            for statement in previous.op.execute.call_args_list:
+                await connection.exec_driver_sql(statement.args[0])
             for monthly in (False, True):
                 await connection.exec_driver_sql(migration._view_sql(monthly=monthly, corrected=False))
                 await connection.exec_driver_sql(migration._view_sql(monthly=monthly, corrected=True))
@@ -83,6 +98,7 @@ async def test_reviewed_kpis_exclude_rejected_and_preserve_denominator() -> None
             assert row["unreviewed_complaint_count"] == 1
             monthly_result = await connection.exec_driver_sql("SELECT * FROM analytics.problem_monthly_kpis")
             assert monthly_result.mappings().one()["complaint_share"] == pytest.approx(2 / 3)
+        await _assert_analytics_api(engine, monkeypatch)
         async with async_sessionmaker(engine)() as session:
             priorities = await load_problem_priorities(session, 1)
             assert priorities[0].signal.complaint_count == 2
@@ -128,3 +144,57 @@ async def test_reviewed_kpis_exclude_rejected_and_preserve_denominator() -> None
         async with engine.begin() as connection:
             await connection.exec_driver_sql("DROP SCHEMA IF EXISTS analytics CASCADE")
         await engine.dispose()
+
+
+async def _assert_analytics_api(engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = AnalyticsAPISettings.model_validate(
+        {
+            "analytics_api_token": "aggregate-integration",
+            "analytics_private_token": "private-integration",
+        }
+    )
+    monkeypatch.setattr(analytics_app, "get_analytics_api_settings", lambda: settings)
+
+    @asynccontextmanager
+    async def session_factory() -> AsyncIterator[AsyncSession]:
+        async with async_sessionmaker(engine)() as session:
+            yield session
+
+    monkeypatch.setattr(analytics_app, "get_session", session_factory)
+    async with AsyncClient(
+        transport=ASGITransport(app=analytics_app.create_analytics_app()), base_url="http://test"
+    ) as client:
+        for path in (
+            "summary?dataset_id=1",
+            "organizations?dataset_id=1",
+            "problems?run_id=1",
+            "monthly?dataset_id=1",
+            "problem-monthly?run_id=1",
+            "priorities?run_id=1",
+        ):
+            response = await client.get(
+                "/api/analytics/" + path, headers={"Authorization": "Bearer aggregate-integration"}
+            )
+            assert response.status_code == 200, response.text
+            assert "Private text" not in response.text
+            assert "evidence_feedback_ids" not in response.text
+        private = await client.get(
+            "/api/analytics/private/examples?run_id=1&category_id=waiting_time",
+            headers={"Authorization": "Bearer private-integration"},
+        )
+        assert private.status_code == 200
+        assert [row["feedback_id"] for row in private.json()] == ["review-1"]
+        assert private.json()[0]["text"] == "Private text"
+        filtered = await client.get(
+            "/api/analytics/problems?run_id=1&organization_id=unknown",
+            headers={"Authorization": "Bearer aggregate-integration"},
+        )
+        assert filtered.json() == []
+    dependency = analytics_app.get_analytics_session()
+    session = await anext(dependency)
+    try:
+        assert await session.scalar(text("SHOW transaction_read_only")) == "on"
+        with pytest.raises(DBAPIError):
+            await session.execute(text("DELETE FROM analytics.problem_assessments"))
+    finally:
+        await dependency.aclose()

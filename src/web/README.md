@@ -1,5 +1,8 @@
 # Web subsystem
 
+The independent analytical read-only API is served by `src.web.analytics_app:app` on a separate process.
+See [analytics API setup and access](../../docs/analytics-api.md).
+
 FastAPI routes, templates, and UI orchestration live here. The web layer may start ingestion and import final ML
 exports, but it must not implement preprocessing, embeddings, or clustering.
 

@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,20 @@ class MLSettings(BaseSettings):
     ml_results_enabled: bool = False
     ml_export_manifest: Path | None = None
     ml_allow_unreliable: bool = False
+
+
+class AnalyticsAPISettings(BaseSettings):
+    """Separate credentials for aggregate analytics and private review examples."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    analytics_api_token: SecretStr | None = None
+    analytics_private_token: SecretStr | None = None
+
+
+@lru_cache
+def get_analytics_api_settings() -> AnalyticsAPISettings:
+    return AnalyticsAPISettings()
 
 
 @lru_cache
