@@ -99,3 +99,6 @@ Topic keywords and generated names can contain sensitive terms derived from comm
 
 Предварительно задайте путь к данным и уникальный run_name в конфигурации. Стадии и продолжение после остановки
 описаны в [инструкции сквозного запуска](../docs/analytics-pipeline.md).
+
+Для отдельной локальной PostgreSQL, реального PDF и проверки доступа без облачных ресурсов используйте
+[инструкцию демо-приёмки](../docs/analytics-demo.md).

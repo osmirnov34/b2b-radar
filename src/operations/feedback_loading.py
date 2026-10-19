@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.analytics import FeedbackPreparationManifest, FeedbackRecord, iter_feedback_records
@@ -176,6 +176,7 @@ async def load_feedback_snapshot(
                 select(AnalyticsDatasetModel).where(AnalyticsDatasetModel.artifact_sha256 == manifest.output_sha256),
             )
             if existing is not None:
+                await session.execute(text("ANALYZE analytics.datasets, analytics.organizations, analytics.feedback"))
                 return await _existing_result(session, existing, manifest)
 
             dataset = AnalyticsDatasetModel(
@@ -205,6 +206,8 @@ async def load_feedback_snapshot(
             )
             for batch in _feedback_batches(artifact_path, dataset.id, batch_size):
                 await session.execute(insert(AnalyticsFeedbackModel), batch)
+            # Small metadata tables may never reach autovacuum's analyze threshold.
+            await session.execute(text("ANALYZE analytics.datasets, analytics.organizations, analytics.feedback"))
     except SQLAlchemyError:
         msg = "database rejected the analytical snapshot; transaction rolled back"
         raise AnalyticsLoadError(msg) from None

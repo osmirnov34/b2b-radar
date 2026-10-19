@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.analytics import FeedbackArtifactError, FeedbackPreparationManifest, parse_feedback_line
@@ -37,10 +37,7 @@ def _prepared_artifact(tmp_path: Path) -> tuple[Path, Path]:
     artifact = tmp_path / "feedback.jsonl"
     manifest = tmp_path / "feedback.manifest.json"
     source.write_text(
-        "\n".join(
-            json.dumps(row, ensure_ascii=False)
-            for row in [_row("7995cc14c8b92196"), _row("6529392e51d48c89")]
-        )
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in [_row("7995cc14c8b92196"), _row("6529392e51d48c89")])
         + "\n",
         encoding="utf-8",
     )
@@ -129,6 +126,21 @@ async def test_load_feedback_snapshot_is_transactional_and_idempotent(tmp_path: 
         assert second.dataset_id == first.dataset_id
         assert dataset_count == 1
         assert feedback_count == 2
+        async with session_factory() as session:
+            estimates = dict(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT relname, reltuples FROM pg_class WHERE oid IN "
+                            "('analytics.datasets'::regclass, 'analytics.organizations'::regclass, "
+                            "'analytics.feedback'::regclass)"
+                        )
+                    )
+                )
+                .tuples()
+                .all()
+            )
+        assert estimates == {"datasets": 1, "organizations": first.organizations, "feedback": first.records}
     finally:
         async with engine.begin() as connection:
             await connection.exec_driver_sql(f"DROP SCHEMA IF EXISTS {ANALYTICS_SCHEMA} CASCADE")

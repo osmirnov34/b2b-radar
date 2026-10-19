@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.infrastructure.analytics_db import (
@@ -108,6 +108,25 @@ async def test_problem_loading_is_transactional_and_idempotent(tmp_path: Path) -
         assert first.categories == 10
         assert run_count == 1
         assert assessment_count == first.assessments
+        async with session_factory() as session:
+            estimates = dict(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT relname, reltuples FROM pg_class WHERE oid IN "
+                            "('analytics.problem_runs'::regclass, 'analytics.problem_categories'::regclass, "
+                            "'analytics.problem_assessments'::regclass)"
+                        )
+                    )
+                )
+                .tuples()
+                .all()
+            )
+        assert estimates == {
+            "problem_runs": 1,
+            "problem_categories": first.categories,
+            "problem_assessments": first.assessments,
+        }
     finally:
         async with engine.begin() as connection:
             await connection.exec_driver_sql(f"DROP SCHEMA IF EXISTS {ANALYTICS_SCHEMA} CASCADE")

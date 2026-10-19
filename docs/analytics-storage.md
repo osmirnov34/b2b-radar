@@ -68,6 +68,16 @@ consistent organization metadata. It then inserts the dataset, organizations, an
 batches of 1,000 rows. A failure rolls back the complete snapshot. Repeating the same verified artifact is idempotent:
 the existing dataset ID is returned only after its stored row counts have been reconciled with the manifest.
 
+Both loaders explicitly run `ANALYZE` on their fact and metadata tables after inserts and when reusing an existing
+snapshot. This avoids waiting for autovacuum, especially on small `datasets`, `problem_runs` and `problem_categories`
+tables: missing statistics can cause repeated aggregate scans in BI/PDF joins. Use a table-owning loader account
+or grant the appropriate PostgreSQL maintenance rights; the read-only BI account is not a loader account.
+This updates planner statistics, not feedback, assessments, KPI definitions or review decisions.
+
+Re-preparing identical source bytes produces the same canonical checksum and reuses the original dataset ID.
+The database retains its first `prepared_at`; a newer manifest preparation timestamp is not a content difference.
+Reconciliation still checks the source and canonical checksums, counts, publication dates and every canonical field.
+
 ## Reconciling stored content
 
 After loading, compare every canonical record with PostgreSQL and optionally save an aggregate JSON report:

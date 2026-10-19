@@ -21,6 +21,9 @@ docker compose up -d   # postgres -> migrations -> web
 
 ## Development
 
+For the independent dentistry analytics demo (isolated local PostgreSQL, PDF, BI/API access checks),
+see [local analytics acceptance](docs/analytics-demo.md).
+
 ### Web UI
 
 FastAPI + server-rendered Jinja2 templates, backed by the same Postgres database as the CLI pipeline.

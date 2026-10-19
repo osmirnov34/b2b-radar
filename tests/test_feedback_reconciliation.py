@@ -6,7 +6,12 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.infrastructure.analytics_db import ANALYTICS_SCHEMA, AnalyticsBase, AnalyticsFeedbackModel
+from src.infrastructure.analytics_db import (
+    ANALYTICS_SCHEMA,
+    AnalyticsBase,
+    AnalyticsDatasetModel,
+    AnalyticsFeedbackModel,
+)
 from src.operations.feedback_loading import load_feedback_snapshot
 from src.operations.feedback_preparation import prepare_yandex_feedback
 from src.operations.feedback_reconciliation import reconcile_feedback_snapshot
@@ -50,7 +55,7 @@ def _prepared_artifact(tmp_path: Path) -> tuple[Path, Path]:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_reconciliation_detects_missing_valid_and_changed_snapshot(tmp_path: Path) -> None:
+async def test_reconciliation_detects_missing_valid_and_changed_snapshot(tmp_path: Path) -> None:  # noqa: PLR0915
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
         pytest.skip("TEST_DATABASE_URL is not configured")
@@ -70,6 +75,25 @@ async def test_reconciliation_detects_missing_valid_and_changed_snapshot(tmp_pat
             await load_feedback_snapshot(session, artifact, manifest)
         async with session_factory() as session:
             valid = await reconcile_feedback_snapshot(session, artifact, manifest)
+        repeated_artifact = tmp_path / "repeated.jsonl"
+        repeated_manifest = tmp_path / "repeated.manifest.json"
+        original_manifest = json.loads(manifest.read_text())
+        repeated = prepare_yandex_feedback(tmp_path / "source.jsonl", repeated_artifact, repeated_manifest)
+        assert repeated.prepared_at.isoformat() != original_manifest["prepared_at"]
+        assert repeated.output_sha256 == original_manifest["output_sha256"]
+        async with session_factory() as session:
+            loaded = await load_feedback_snapshot(session, repeated_artifact, repeated_manifest)
+            assert loaded.already_loaded
+            repeated_report = await reconcile_feedback_snapshot(session, repeated_artifact, repeated_manifest)
+            assert repeated_report.is_valid
+            assert repeated_report.dataset_id == valid.dataset_id
+        async with session_factory.begin() as session:
+            await session.execute(update(AnalyticsDatasetModel).values(source_sha256="f" * 64))
+        async with session_factory() as session:
+            mismatch = await reconcile_feedback_snapshot(session, repeated_artifact, repeated_manifest)
+            assert mismatch.errors == ("dataset.metadata_mismatch",)
+        async with session_factory.begin() as session:
+            await session.execute(update(AnalyticsDatasetModel).values(source_sha256=repeated.source_sha256))
         async with session_factory.begin() as session:
             await session.execute(
                 update(AnalyticsFeedbackModel)

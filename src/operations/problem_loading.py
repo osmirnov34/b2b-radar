@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.analytics import (
@@ -223,10 +223,7 @@ async def _validate_feedback_bindings(
             AnalyticsFeedbackModel.dataset_id == dataset_id,
         ),
     )
-    text_lengths: dict[str, int] = {
-        str(feedback_id): int(text_length)
-        for feedback_id, text_length in rows.tuples()
-    }
+    text_lengths: dict[str, int] = {str(feedback_id): int(text_length) for feedback_id, text_length in rows.tuples()}
     for assessment in assessments:
         length = text_lengths.get(assessment.feedback_id)
         if length is None:
@@ -278,6 +275,9 @@ async def load_problem_assessments(
                 if category_count != len(verified.taxonomy.categories):
                     msg = "existing problem taxonomy snapshot is incomplete"
                     raise ProblemLoadError(msg)
+                await session.execute(
+                    text("ANALYZE analytics.problem_runs, analytics.problem_categories, analytics.problem_assessments")
+                )
                 return ProblemLoadResult(
                     run_id=existing.id,
                     dataset_id=existing.dataset_id,
@@ -332,6 +332,10 @@ async def load_problem_assessments(
             )
             for batch in _assessment_batches(verified, run.id, dataset.id, batch_size):
                 await session.execute(insert(AnalyticsProblemAssessmentModel), batch)
+            # Refresh dimension statistics as well as the large assessment table.
+            await session.execute(
+                text("ANALYZE analytics.problem_runs, analytics.problem_categories, analytics.problem_assessments")
+            )
     except SQLAlchemyError:
         msg = "database rejected problem assessments; transaction rolled back"
         raise ProblemLoadError(msg) from None

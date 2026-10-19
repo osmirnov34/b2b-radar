@@ -93,11 +93,13 @@ async def reconcile_feedback_snapshot(
                     AnalyticsFeedbackModel.search_query,
                     AnalyticsOrganizationModel.organization_name,
                     AnalyticsOrganizationModel.organization_url,
-                ).join(
+                )
+                .join(
                     AnalyticsOrganizationModel,
                     (AnalyticsOrganizationModel.dataset_id == AnalyticsFeedbackModel.dataset_id)
                     & (AnalyticsOrganizationModel.organization_id == AnalyticsFeedbackModel.organization_id),
-                ).where(AnalyticsFeedbackModel.dataset_id == dataset.id),
+                )
+                .where(AnalyticsFeedbackModel.dataset_id == dataset.id),
             )
         ).all()
         rows = [
@@ -208,7 +210,8 @@ def _reconciliation_errors(
         and dataset.manifest_schema_version == manifest.schema_version
         and dataset.source_sha256 == manifest.source_sha256
         and dataset.artifact_sha256 == manifest.output_sha256
-        and dataset.prepared_at == manifest.prepared_at
+        # Content-addressed snapshots retain their first preparation timestamp.
+        # Re-preparing identical source bytes must not invalidate that snapshot.
         and dataset.record_count == manifest.records
         and dataset.organization_count == manifest.unique_organizations
         and dataset.published_on_min == manifest.published_on_min
