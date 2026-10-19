@@ -80,3 +80,12 @@ Topic keywords and generated names can contain sensitive terms derived from comm
 
 Здесь `1` — ID из `analytics.problem_runs`. Пакет не содержит данных или паролей и не создаёт графики в аккаунте.
 Порядок подключения и ручной сборки описан в [инструкции DataLens](../docs/datalens-dashboard.md).
+
+## Управленческий PDF
+
+```bash
+.venv/bin/python scripts/generate_analytical_report.py 1 data/reports/management-run-1
+```
+
+Требуются reporting-extra и TTF-шрифт с кириллицей. PDF, агрегатный JSON и манифест создаются в новой папке.
+Подробности: [генерация отчёта](../docs/analytical-pdf-report.md).

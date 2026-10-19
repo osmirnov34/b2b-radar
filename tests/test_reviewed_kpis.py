@@ -16,6 +16,7 @@ from src.config import AnalyticsAPISettings
 from src.infrastructure.analytics_db import AnalyticsBase
 from src.operations.problem_priorities import load_problem_priorities
 from src.web import analytics_app
+from tests.test_analytical_report import assert_report_snapshot
 from tests.test_datalens_package import assert_datalens_sources
 
 
@@ -101,6 +102,7 @@ async def test_reviewed_kpis_exclude_rejected_and_preserve_denominator(  # noqa:
             assert monthly_result.mappings().one()["complaint_share"] == pytest.approx(2 / 3)
         await _assert_analytics_api(engine, monkeypatch)
         await assert_datalens_sources(engine)
+        await assert_report_snapshot(engine)
         async with async_sessionmaker(engine)() as session:
             priorities = await load_problem_priorities(session, 1)
             assert priorities[0].signal.complaint_count == 2

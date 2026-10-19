@@ -46,6 +46,9 @@ visualization = [
     "pandas>=2.2",
     "plotly>=5.24",
 ]
+reporting = [
+    "reportlab>=4.4,<5",
+]
 
 [tool.ruff]
 target-version = "py311"
