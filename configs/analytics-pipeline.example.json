@@ -1,0 +1,11 @@
+{
+  "source": "data/raw/reviews.jsonl",
+  "runs_root": "data/analytics-runs",
+  "run_name": "dentistry-001",
+  "taxonomy": "configs/dental-problem-taxonomy.v1.json",
+  "rules": "configs/dental-problem-rules.v1.json",
+  "font": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+  "create_pdf": true,
+  "ml_corpus_manifest": null,
+  "ml_reassignment_manifest": null
+}

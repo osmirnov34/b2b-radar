@@ -89,3 +89,13 @@ Topic keywords and generated names can contain sensitive terms derived from comm
 
 Требуются reporting-extra и TTF-шрифт с кириллицей. PDF, агрегатный JSON и манифест создаются в новой папке.
 Подробности: [генерация отчёта](../docs/analytical-pdf-report.md).
+
+## Единый запуск
+
+```bash
+.venv/bin/python scripts/run_analytics_pipeline.py configs/analytics-pipeline.example.json --dry-run
+.venv/bin/python scripts/run_analytics_pipeline.py configs/analytics-pipeline.example.json
+```
+
+Предварительно задайте путь к данным и уникальный run_name в конфигурации. Стадии и продолжение после остановки
+описаны в [инструкции сквозного запуска](../docs/analytics-pipeline.md).
