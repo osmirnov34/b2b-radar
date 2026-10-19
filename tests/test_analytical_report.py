@@ -4,14 +4,17 @@ import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from src.analytics.pdf_report import write_analytical_report
 from src.analytics.report import AnalyticalReport
 from src.operations.analytical_report import load_analytical_report
+from src.operations.datalens_csv import export_datalens_csv
 
 FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
@@ -148,6 +151,21 @@ async def assert_report_snapshot(engine: AsyncEngine) -> None:
         assert report.categories[0].rejected_count == 1
         assert report.recommendations[0].requires_review
         assert "Private text" not in report.model_dump_json()
+        if importlib.util.find_spec("reportlab") is not None and FONT.is_file():  # noqa: ASYNC240 -- local test fixture.
+            with TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                write_analytical_report(report, root / "pdf", FONT)
+                async with async_sessionmaker(engine)() as session:
+                    manifest = await export_datalens_csv(session, root / "pdf", root / "csv")
+                    assert await session.scalar(text("SHOW enable_mergejoin")) == "on"
+                assert manifest["rows"] == {
+                    "organization_overview": 1,
+                    "organization_monthly": 1,
+                    "category_overview": 1,
+                    "category_monthly": 1,
+                }
+                for file in (root / "csv").glob("*.csv"):
+                    assert "Private text" not in file.read_text(encoding="utf-8-sig")
         assert "review-1" not in report.model_dump_json()
         async with async_sessionmaker(engine)() as session:
             with pytest.raises(ValueError, match="does not exist"):

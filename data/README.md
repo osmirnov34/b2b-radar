@@ -102,3 +102,6 @@ Topic keywords and generated names can contain sensitive terms derived from comm
 
 Для отдельной локальной PostgreSQL, реального PDF и проверки доступа без облачных ресурсов используйте
 [инструкцию демо-приёмки](../docs/analytics-demo.md).
+
+Без облачной БД доступна [выгрузка агрегатов в CSV для DataLens](../docs/datalens-csv.md).
+Готовые CSV текущего запуска находятся в `data/reports/datalens-csv-run-2-v2/`; исходные отзывы туда не входят.
